@@ -1,0 +1,31 @@
+# Exchange Fee Configuration
+# Fees are in percentage (0.10 = 0.10%)
+
+exchanges:
+  binance:
+    maker_fee: 0.10
+    taker_fee: 0.10
+
+  bybit:
+    maker_fee: 0.10
+    taker_fee: 0.10
+
+  okx:
+    maker_fee: 0.08
+    taker_fee: 0.10
+
+  gateio:
+    maker_fee: 0.10
+    taker_fee: 0.20
+
+  kucoin:
+    maker_fee: 0.10
+    taker_fee: 0.10
+
+  mexc:
+    maker_fee: 0.00
+    taker_fee: 0.05
+
+# Default fee type applied to entries and exits
+# Options: "maker" or "taker"
+default_fee_type: taker

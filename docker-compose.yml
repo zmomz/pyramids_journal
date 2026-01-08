@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  pyramids-journal:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pyramids-journal
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist SQLite database
+      - pyramids_data:/app/data
+      # Mount config file (optional - for custom config)
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      # Required
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
+
+      # Optional overrides
+      - TIMEZONE=${TIMEZONE:-Asia/Riyadh}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DATABASE_PATH=/app/data/pyramids.db
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pyramids_data:
+    name: pyramids_journal_data
