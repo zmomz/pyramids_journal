@@ -63,6 +63,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Pyramids Journal",
+    root_path="/pyramids_journal",
     description="TradingView Signal Platform with Telegram Integration",
     version="1.0.0",
     lifespan=lifespan,
