@@ -120,8 +120,18 @@ class TradeService:
     ) -> tuple[TradeResult, PyramidEntryData | None]:
         """Process an entry signal."""
 
-        # Use close price from webhook
-        current_price = alert.close
+        # Fetch actual price from exchange
+        try:
+            price_data = await exchange_service.get_price(exchange, parsed.base, parsed.quote)
+            current_price = price_data.price
+            logger.info(f"Fetched price from {exchange}: ${current_price}")
+        except Exception as e:
+            logger.error(f"Failed to fetch price from {exchange}: {e}")
+            return TradeResult(
+                success=False,
+                message=f"Failed to fetch price from {exchange}: {e}",
+                error="PRICE_FETCH_FAILED",
+            ), None
 
         # Get or create trade with timeframe-aware grouping (need pyramid_index first)
         trade = await db.get_open_trade_by_group(
@@ -289,8 +299,18 @@ class TradeService:
                 error="NO_PYRAMIDS",
             ), None
 
-        # Use close price from webhook
-        exit_price = alert.close
+        # Fetch actual price from exchange
+        try:
+            price_data = await exchange_service.get_price(exchange, parsed.base, parsed.quote)
+            exit_price = price_data.price
+            logger.info(f"Fetched exit price from {exchange}: ${exit_price}")
+        except Exception as e:
+            logger.error(f"Failed to fetch exit price from {exchange}: {e}")
+            return TradeResult(
+                success=False,
+                message=f"Failed to fetch price from {exchange}: {e}",
+                error="PRICE_FETCH_FAILED",
+            ), None
 
         # Calculate PnL for each pyramid
         fee_rate = exchange_config.get_fee_rate(exchange)
