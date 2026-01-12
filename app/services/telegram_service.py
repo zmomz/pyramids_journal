@@ -79,6 +79,12 @@ class TelegramService:
         sign = "+" if percent >= 0 else ""
         return f"{sign}{percent:.2f}%"
 
+    def _format_quantity(self, qty: float) -> str:
+        """Format quantity, removing unnecessary trailing zeros."""
+        # Format with enough precision, then strip trailing zeros
+        formatted = f"{qty:.8f}".rstrip('0').rstrip('.')
+        return formatted
+
     def _parse_exchange_timestamp(self, timestamp: str) -> str:
         """Parse exchange timestamp and format it for display."""
         try:
@@ -113,7 +119,7 @@ class TelegramService:
             f"Timeframe: {data.timeframe}",
             "",
             f"Entry Price: {self._format_price(data.entry_price)}",
-            f"Size: {data.position_size:.6f} {data.base}",
+            f"Size: {self._format_quantity(data.position_size)} {data.base}",
             f"Capital: ${data.capital_usdt:.2f}",
             "",
             "Timestamps:",
@@ -169,7 +175,7 @@ class TelegramService:
             price_str = self._format_price(pyramid["entry_price"])
             lines.append(
                 f"{prefix} P{pyramid['index']}: {price_str} @ {entry_time_str} "
-                f"({pyramid['size']:.6f} {data.base})"
+                f"({self._format_quantity(pyramid['size'])} {data.base})"
             )
 
         # Add exit with dual timestamps
