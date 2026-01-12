@@ -167,12 +167,23 @@ class TradeService:
             timeframe=alert.timeframe,
         )
 
-        # Calculate position size from capital / price
+        # Get symbol info for precision rounding
+        try:
+            symbol_info = await exchange_service.get_symbol_info(
+                exchange, parsed.base, parsed.quote
+            )
+            qty_precision = symbol_info.qty_precision
+        except Exception as e:
+            logger.warning(f"Could not get symbol info for precision: {e}, using default 4")
+            qty_precision = 4
+
+        # Calculate position size from capital / price, rounded to exchange precision
         position_size = capital_usd / current_price
-        notional = capital_usd
+        position_size = exchange_service.round_quantity(position_size, qty_precision)
+        notional = position_size * current_price  # Actual notional after rounding
         logger.info(
             f"Using capital for Pyramid #{pyramid_index}: ${capital_usd} -> "
-            f"{position_size:.6f} {parsed.base}"
+            f"{position_size} {parsed.base} (precision: {qty_precision})"
         )
 
         # Validate order if strict mode
@@ -200,7 +211,7 @@ class TradeService:
             pyramid_index=pyramid_index,
             entry_price=current_price,
             position_size=position_size,
-            capital_usdt=capital_usd,
+            capital_usdt=notional,  # Actual capital after precision rounding
             fee_rate=fee_rate,
             fee_usdt=fee_usdt,
             exchange_timestamp=alert.timestamp,
@@ -220,7 +231,7 @@ class TradeService:
             timeframe=alert.timeframe,
             entry_price=current_price,
             position_size=position_size,
-            capital_usdt=capital_usd,
+            capital_usdt=notional,  # Actual capital after precision rounding
             exchange_timestamp=alert.timestamp,
             received_timestamp=received_timestamp,
             total_pyramids=pyramid_index + 1,
