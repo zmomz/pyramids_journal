@@ -870,6 +870,108 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message)
 
 
+# ============== Data Management Commands ==============
+
+@channel_only
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reset/clear data from database.
+
+    Usage:
+        /reset - Show reset options
+        /reset trades CONFIRM - Clear all trade data
+        /reset settings CONFIRM - Clear all settings
+        /reset cache CONFIRM - Clear cached data
+        /reset all CONFIRM - Full database reset
+    """
+    args = context.args if context.args else []
+
+    if not args:
+        # Show help
+        message = """🗑️ Data Reset Options
+
+/reset trades CONFIRM
+  Clear all trades, pyramids, exits, sequences
+
+/reset settings CONFIRM
+  Clear capital settings and other configs
+
+/reset cache CONFIRM
+  Clear symbol rules cache and daily reports
+
+/reset all CONFIRM
+  Full database reset (everything above)
+
+⚠️ WARNING: These actions are irreversible!
+You must add CONFIRM at the end to execute."""
+        await update.message.reply_text(message)
+        return
+
+    reset_type = args[0].lower()
+    confirmed = len(args) > 1 and args[1].upper() == "CONFIRM"
+
+    if not confirmed:
+        await update.message.reply_text(
+            f"⚠️ To reset {reset_type}, use:\n/reset {reset_type} CONFIRM"
+        )
+        return
+
+    try:
+        if reset_type == "trades":
+            counts = await db.reset_trades()
+            message = f"""✅ Trade Data Cleared
+
+Deleted:
+├─ Trades: {counts.get('trades', 0)}
+├─ Pyramids: {counts.get('pyramids', 0)}
+└─ Exits: {counts.get('exits', 0)}
+
+Sequences and processed alerts also reset."""
+
+        elif reset_type == "settings":
+            counts = await db.reset_settings()
+            message = f"""✅ Settings Cleared
+
+Deleted: {counts.get('settings', 0)} setting(s)
+
+Capital configurations have been reset."""
+
+        elif reset_type == "cache":
+            counts = await db.reset_cache()
+            message = f"""✅ Cache Cleared
+
+Deleted:
+├─ Symbol rules: {counts.get('symbol_rules', 0)}
+└─ Daily reports: {counts.get('daily_reports', 0)}"""
+
+        elif reset_type == "all":
+            counts = await db.reset_all()
+            message = f"""✅ Full Database Reset
+
+Deleted:
+├─ Trades: {counts.get('trades', 0)}
+├─ Pyramids: {counts.get('pyramids', 0)}
+├─ Exits: {counts.get('exits', 0)}
+├─ Settings: {counts.get('settings', 0)}
+├─ Symbol rules: {counts.get('symbol_rules', 0)}
+└─ Daily reports: {counts.get('daily_reports', 0)}
+
+Database is now clean."""
+
+        else:
+            await update.message.reply_text(
+                f"❌ Unknown reset type: {reset_type}\n"
+                "Valid options: trades, settings, cache, all"
+            )
+            return
+
+        await update.message.reply_text(message)
+        logger.info(f"Database reset ({reset_type}) executed")
+
+    except Exception as e:
+        logger.error(f"Error in /reset: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 def setup_handlers(app: Application, bot) -> None:
     """Register all command handlers."""
     global _bot
@@ -907,8 +1009,9 @@ def setup_handlers(app: Application, bot) -> None:
     app.add_handler(CommandHandler("ignore", cmd_ignore))
     app.add_handler(CommandHandler("unignore", cmd_unignore))
 
-    # Export
+    # Export & Data Management
     app.add_handler(CommandHandler("export", cmd_export))
+    app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("help", cmd_help))
 
-    logger.info("Registered 22 bot command handlers")
+    logger.info("Registered 23 bot command handlers")

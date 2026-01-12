@@ -242,4 +242,8 @@ def format_help() -> str:
 
 📤 Export
 /export - Export trades to CSV
+
+🗑️ Data Management
+/reset - Reset/clear data options
+
 /help - This message"""

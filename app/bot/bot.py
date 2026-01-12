@@ -35,6 +35,7 @@ BOT_COMMANDS = [
     BotCommand("ignore", "Ignore pair"),
     BotCommand("unignore", "Resume pair"),
     BotCommand("export", "Export to CSV"),
+    BotCommand("reset", "Reset/clear data"),
     BotCommand("help", "Show all commands"),
 ]
 

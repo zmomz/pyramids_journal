@@ -691,6 +691,66 @@ class Database:
         )
         await self.connection.commit()
 
+    # =========== Data Reset Methods ===========
+
+    async def reset_trades(self) -> dict:
+        """Clear all trade data (trades, pyramids, exits, sequences)."""
+        counts = {}
+
+        # Count before deletion
+        cursor = await self.connection.execute("SELECT COUNT(*) FROM trades")
+        counts["trades"] = (await cursor.fetchone())[0]
+
+        cursor = await self.connection.execute("SELECT COUNT(*) FROM pyramids")
+        counts["pyramids"] = (await cursor.fetchone())[0]
+
+        cursor = await self.connection.execute("SELECT COUNT(*) FROM exits")
+        counts["exits"] = (await cursor.fetchone())[0]
+
+        # Delete in order (child tables first)
+        await self.connection.execute("DELETE FROM pyramids")
+        await self.connection.execute("DELETE FROM exits")
+        await self.connection.execute("DELETE FROM trades")
+        await self.connection.execute("DELETE FROM pyramid_group_sequences")
+        await self.connection.execute("DELETE FROM processed_alerts")
+        await self.connection.commit()
+
+        return counts
+
+    async def reset_settings(self) -> dict:
+        """Clear all settings (capital configs, etc.)."""
+        cursor = await self.connection.execute("SELECT COUNT(*) FROM settings")
+        count = (await cursor.fetchone())[0]
+
+        await self.connection.execute("DELETE FROM settings")
+        await self.connection.commit()
+
+        return {"settings": count}
+
+    async def reset_cache(self) -> dict:
+        """Clear cached data (symbol rules, daily reports)."""
+        counts = {}
+
+        cursor = await self.connection.execute("SELECT COUNT(*) FROM symbol_rules")
+        counts["symbol_rules"] = (await cursor.fetchone())[0]
+
+        cursor = await self.connection.execute("SELECT COUNT(*) FROM daily_reports")
+        counts["daily_reports"] = (await cursor.fetchone())[0]
+
+        await self.connection.execute("DELETE FROM symbol_rules")
+        await self.connection.execute("DELETE FROM daily_reports")
+        await self.connection.commit()
+
+        return counts
+
+    async def reset_all(self) -> dict:
+        """Full database reset - clears everything."""
+        counts = {}
+        counts.update(await self.reset_trades())
+        counts.update(await self.reset_settings())
+        counts.update(await self.reset_cache())
+        return counts
+
 
 # Global database instance
 db = Database()
