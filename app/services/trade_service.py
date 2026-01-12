@@ -200,7 +200,7 @@ class TradeService:
             pyramid_index=pyramid_index,
             entry_price=current_price,
             position_size=position_size,
-            notional_usdt=notional,
+            capital_usdt=capital_usd,
             fee_rate=fee_rate,
             fee_usdt=fee_usdt,
             exchange_timestamp=alert.timestamp,
@@ -220,7 +220,7 @@ class TradeService:
             timeframe=alert.timeframe,
             entry_price=current_price,
             position_size=position_size,
-            notional_usdt=notional,
+            capital_usdt=capital_usd,
             exchange_timestamp=alert.timestamp,
             received_timestamp=received_timestamp,
             total_pyramids=pyramid_index + 1,
@@ -286,20 +286,20 @@ class TradeService:
         total_gross_pnl = 0.0
         total_entry_fees = 0.0
         total_exit_fees = 0.0
-        total_notional = 0.0
+        total_capital = 0.0
         pyramid_details = []
 
         for pyramid in pyramids:
             entry_price = pyramid["entry_price"]
             size = pyramid["position_size"]
-            notional = pyramid["notional_usdt"]
+            capital = pyramid["capital_usdt"]
 
             # Calculate PnL (LONG only)
             gross_pnl = (exit_price - entry_price) * size
             entry_fee = pyramid["fee_usdt"]
             exit_fee = exit_price * size * fee_rate
             net_pnl = gross_pnl - entry_fee - exit_fee
-            pnl_percent = (net_pnl / notional) * 100 if notional > 0 else 0
+            pnl_percent = (net_pnl / capital) * 100 if capital > 0 else 0
 
             # Update pyramid PnL
             await db.update_pyramid_pnl(pyramid["id"], net_pnl, pnl_percent)
@@ -307,7 +307,7 @@ class TradeService:
             total_gross_pnl += gross_pnl
             total_entry_fees += entry_fee
             total_exit_fees += exit_fee
-            total_notional += notional
+            total_capital += capital
 
             pyramid_details.append({
                 "index": pyramid["pyramid_index"],
@@ -323,7 +323,7 @@ class TradeService:
         total_fees = total_entry_fees + total_exit_fees
         total_net_pnl = total_gross_pnl - total_fees
         total_pnl_percent = (
-            (total_net_pnl / total_notional) * 100 if total_notional > 0 else 0
+            (total_net_pnl / total_capital) * 100 if total_capital > 0 else 0
         )
 
         # Add exit record with timestamps

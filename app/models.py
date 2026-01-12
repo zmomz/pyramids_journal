@@ -56,7 +56,7 @@ class PyramidEntryData(BaseModel):
     timeframe: str
     entry_price: float
     position_size: float
-    notional_usdt: float
+    capital_usdt: float
     exchange_timestamp: str
     received_timestamp: datetime
     total_pyramids: int
@@ -83,7 +83,7 @@ class PyramidRecord(BaseModel):
     pyramid_index: int
     entry_price: float
     position_size: float
-    notional_usdt: float
+    capital_usdt: float
     entry_time: datetime
     fee_rate: float
     fee_usdt: float

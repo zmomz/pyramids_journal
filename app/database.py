@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS pyramids (
     pyramid_index INTEGER NOT NULL,
     entry_price REAL NOT NULL,
     position_size REAL NOT NULL,
-    notional_usdt REAL NOT NULL,
+    capital_usdt REAL NOT NULL,
     entry_time TIMESTAMP NOT NULL,
     fee_rate REAL NOT NULL,
     fee_usdt REAL NOT NULL,
@@ -304,7 +304,7 @@ class Database:
         pyramid_index: int,
         entry_price: float,
         position_size: float,
-        notional_usdt: float,
+        capital_usdt: float,
         fee_rate: float,
         fee_usdt: float,
         exchange_timestamp: str | None = None,
@@ -314,7 +314,7 @@ class Database:
         await self.connection.execute(
             """
             INSERT INTO pyramids
-            (id, trade_id, pyramid_index, entry_price, position_size, notional_usdt,
+            (id, trade_id, pyramid_index, entry_price, position_size, capital_usdt,
              entry_time, fee_rate, fee_usdt, exchange_timestamp, received_timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -324,7 +324,7 @@ class Database:
                 pyramid_index,
                 entry_price,
                 position_size,
-                notional_usdt,
+                capital_usdt,
                 datetime.utcnow().isoformat(),
                 fee_rate,
                 fee_usdt,

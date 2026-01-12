@@ -109,7 +109,7 @@ class ReportService:
         # Aggregate statistics
         total_trades_count = len(trades)
         total_pnl_usdt = 0.0
-        total_notional = 0.0
+        total_capital = 0.0
         total_pyramids = 0
 
         trade_history: list[TradeHistoryItem] = []
@@ -136,7 +136,7 @@ class ReportService:
             total_pyramids += pyramids_count
 
             for pyramid in pyramids:
-                total_notional += pyramid.get("notional_usdt", 0) or 0
+                total_capital += pyramid.get("capital_usdt", 0) or 0
 
             # Add to trade history
             trade_history.append(TradeHistoryItem(
@@ -162,7 +162,7 @@ class ReportService:
 
         # Calculate overall percentage
         total_pnl_percent = (
-            (total_pnl_usdt / total_notional) * 100 if total_notional > 0 else 0
+            (total_pnl_usdt / total_capital) * 100 if total_capital > 0 else 0
         )
 
         # Sort trade history by PnL (best first)

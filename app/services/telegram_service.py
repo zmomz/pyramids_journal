@@ -114,7 +114,7 @@ class TelegramService:
             "",
             f"Entry Price: {self._format_price(data.entry_price)}",
             f"Size: {data.position_size:.6f} {data.base}",
-            f"Notional: ${data.notional_usdt:.2f}",
+            f"Capital: ${data.capital_usdt:.2f}",
             "",
             "Timestamps:",
             f"├─ Exchange: {exchange_time_str}",
