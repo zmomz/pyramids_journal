@@ -12,7 +12,7 @@ from telegram import Bot
 from telegram.error import TelegramError
 
 from ..config import settings
-from ..models import TradeClosedData, DailyReportData
+from ..models import TradeClosedData, DailyReportData, PyramidEntryData
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +79,53 @@ class TelegramService:
         sign = "+" if percent >= 0 else ""
         return f"{sign}{percent:.2f}%"
 
+    def _parse_exchange_timestamp(self, timestamp: str) -> str:
+        """Parse exchange timestamp and format it for display."""
+        try:
+            # Try ISO format (YYYY-MM-DDTHH:MM:SSZ)
+            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            return self._format_time(dt)
+        except (ValueError, AttributeError):
+            # Return as-is if parsing fails
+            return timestamp or "N/A"
+
+    def format_pyramid_entry_message(self, data: PyramidEntryData) -> str:
+        """
+        Format pyramid entry notification message.
+
+        Args:
+            data: Pyramid entry data
+
+        Returns:
+            Formatted message string
+        """
+        exchange_time_str = self._parse_exchange_timestamp(data.exchange_timestamp)
+        received_time_str = self._format_time(data.received_timestamp)
+
+        lines = [
+            "📈 Pyramid Entry",
+            "",
+            f"Group: {data.group_id}",
+            f"Pyramid #{data.pyramid_index}",
+            "",
+            f"Exchange: {data.exchange.capitalize()}",
+            f"Pair: {data.base}/{data.quote}",
+            f"Timeframe: {data.timeframe}",
+            "",
+            f"Entry Price: {self._format_price(data.entry_price)}",
+            f"Size: {data.position_size:.6f} {data.base}",
+            f"Notional: ${data.notional_usdt:.2f}",
+            "",
+            "Timestamps:",
+            f"├─ Exchange: {exchange_time_str}",
+            f"└─ Received: {received_time_str} ({settings.timezone})",
+        ]
+
+        return "\n".join(lines)
+
     def format_trade_closed_message(self, data: TradeClosedData) -> str:
         """
-        Format trade closed notification message.
+        Format trade closed notification message with dual timestamps.
 
         Args:
             data: Trade closed data
@@ -89,13 +133,17 @@ class TelegramService:
         Returns:
             Formatted message string
         """
-        local_now = self._get_local_time()
+        # Parse timestamps
+        exchange_time_str = self._parse_exchange_timestamp(data.exchange_timestamp)
+        received_time_str = self._format_time(data.received_timestamp)
 
         lines = [
             "📊 Trade Closed",
             "",
-            f"Date: {local_now.strftime('%Y-%m-%d')}",
-            f"Time: {local_now.strftime('%H:%M:%S')} ({settings.timezone})",
+            f"Group: {data.group_id}",
+            f"Timeframe: {data.timeframe}",
+            "",
+            f"Date: {self._format_date(data.received_timestamp)}",
             "",
             f"Exchange: {data.exchange.capitalize()}",
             f"Pair: {data.base}/{data.quote}",
@@ -103,7 +151,7 @@ class TelegramService:
             "Entries:",
         ]
 
-        # Add pyramid entries
+        # Add pyramid entries with their exchange timestamps
         for i, pyramid in enumerate(data.pyramids):
             is_last = i == len(data.pyramids) - 1
             prefix = "└─" if is_last else "├─"
@@ -120,14 +168,17 @@ class TelegramService:
 
             price_str = self._format_price(pyramid["entry_price"])
             lines.append(
-                f"{prefix} Pyramid {pyramid['index']}: {price_str} @ {entry_time_str} "
-                f"({pyramid['size']} {data.base})"
+                f"{prefix} P{pyramid['index']}: {price_str} @ {entry_time_str} "
+                f"({pyramid['size']:.6f} {data.base})"
             )
 
-        # Add exit
+        # Add exit with dual timestamps
         lines.extend([
             "",
-            f"Exit: {self._format_price(data.exit_price)} @ {self._format_time(data.exit_time)}",
+            f"Exit: {self._format_price(data.exit_price)}",
+            "Exit Timestamps:",
+            f"├─ Exchange: {exchange_time_str}",
+            f"└─ Received: {received_time_str} ({settings.timezone})",
             "",
             "Results:",
             f"├─ Gross PnL: {self._format_pnl(data.gross_pnl)}",
@@ -156,6 +207,23 @@ class TelegramService:
             f"└─ Net PnL: {self._format_pnl(data.total_pnl_usdt)} ({self._format_percent(data.total_pnl_percent)})",
         ]
 
+        # Trade history with group_id
+        if data.trades:
+            lines.extend(["", "Closed Trades:"])
+            for i, trade in enumerate(data.trades):
+                is_last = i == len(data.trades) - 1
+                prefix = "└─" if is_last else "├─"
+                pnl_str = self._format_pnl(trade.pnl_usdt)
+                pct_str = self._format_percent(trade.pnl_percent)
+                lines.append(
+                    f"{prefix} {trade.group_id}: {pnl_str} ({pct_str})"
+                )
+                # Show details on next line
+                detail_prefix = "   " if is_last else "│  "
+                lines.append(
+                    f"{detail_prefix} {trade.exchange.capitalize()} | {trade.pair} | {trade.timeframe} | {trade.pyramids_count}P"
+                )
+
         # By exchange breakdown
         if data.by_exchange:
             lines.extend(["", "By Exchange:"])
@@ -169,13 +237,26 @@ class TelegramService:
                     f"{prefix} {exchange.capitalize()}: {self._format_pnl(pnl)} ({trades} trades)"
                 )
 
-        # Top pairs breakdown
+        # By timeframe breakdown
+        if data.by_timeframe:
+            lines.extend(["", "By Timeframe:"])
+            timeframes = list(data.by_timeframe.items())
+            for i, (timeframe, stats) in enumerate(timeframes):
+                is_last = i == len(timeframes) - 1
+                prefix = "└─" if is_last else "├─"
+                pnl = stats.get("pnl", 0)
+                trades = stats.get("trades", 0)
+                lines.append(
+                    f"{prefix} {timeframe}: {self._format_pnl(pnl)} ({trades} trades)"
+                )
+
+        # By pair breakdown
         if data.by_pair:
-            lines.extend(["", "Top Pairs:"])
+            lines.extend(["", "By Pair:"])
             # Sort by absolute PnL
             sorted_pairs = sorted(
                 data.by_pair.items(), key=lambda x: abs(x[1]), reverse=True
-            )[:5]  # Top 5
+            )
             for i, (pair, pnl) in enumerate(sorted_pairs):
                 is_last = i == len(sorted_pairs) - 1
                 prefix = "└─" if is_last else "├─"
@@ -223,6 +304,19 @@ class TelegramService:
             True if sent successfully
         """
         message = self.format_trade_closed_message(data)
+        return await self.send_message(message)
+
+    async def send_pyramid_entry(self, data: PyramidEntryData) -> bool:
+        """
+        Send pyramid entry notification.
+
+        Args:
+            data: Pyramid entry data
+
+        Returns:
+            True if sent successfully
+        """
+        message = self.format_pyramid_entry_message(data)
         return await self.send_message(message)
 
     async def send_daily_report(self, data: DailyReportData) -> bool:

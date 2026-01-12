@@ -4,15 +4,19 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 
-class PyramidAlert(BaseModel):
-    """Model for pyramid entry alerts from TradingView."""
+class TradingViewAlert(BaseModel):
+    """New unified webhook payload from TradingView strategy alerts."""
 
-    type: Literal["pyramid"] = "pyramid"
-    index: int = Field(..., ge=1, le=5, description="Pyramid index (1-5)")
+    timestamp: str = Field(..., description="Exchange timestamp from TradingView {{timenow}}")
     exchange: str = Field(..., min_length=1, description="Exchange name")
     symbol: str = Field(..., min_length=1, description="Trading pair symbol")
-    size: float = Field(..., gt=0, description="Position size in base currency")
-    alert_id: str = Field(..., min_length=1, description="Unique alert ID for idempotency")
+    timeframe: str = Field(..., min_length=1, description="Chart timeframe e.g., '1h', '4h', '1D'")
+    action: Literal["buy", "sell"] = Field(..., description="Order action")
+    order_id: str = Field(..., min_length=1, description="Unique order ID for idempotency")
+    contracts: float = Field(..., ge=0, description="Number of contracts/quantity")
+    close: float = Field(..., gt=0, description="Current close price")
+    position_side: Literal["long", "short", "flat"] = Field(..., description="Current position side")
+    position_qty: float = Field(..., ge=0, description="Current position quantity")
 
     @field_validator("exchange")
     @classmethod
@@ -26,37 +30,36 @@ class PyramidAlert(BaseModel):
         """Normalize symbol to uppercase."""
         return v.upper().strip()
 
-
-class ExitAlert(BaseModel):
-    """Model for exit alerts from TradingView."""
-
-    type: Literal["exit"] = "exit"
-    exchange: str = Field(..., min_length=1, description="Exchange name")
-    symbol: str = Field(..., min_length=1, description="Trading pair symbol")
-    alert_id: str = Field(..., min_length=1, description="Unique alert ID for idempotency")
-
-    @field_validator("exchange")
+    @field_validator("timeframe")
     @classmethod
-    def normalize_exchange(cls, v: str) -> str:
-        """Normalize exchange name to lowercase."""
+    def normalize_timeframe(cls, v: str) -> str:
+        """Normalize timeframe to lowercase."""
         return v.lower().strip()
 
-    @field_validator("symbol")
-    @classmethod
-    def normalize_symbol(cls, v: str) -> str:
-        """Normalize symbol to uppercase."""
-        return v.upper().strip()
+    def is_entry(self) -> bool:
+        """Determine if this is an entry signal (long only)."""
+        return self.action == "buy" and self.position_side == "long"
+
+    def is_exit(self) -> bool:
+        """Determine if this is an exit signal."""
+        return self.action == "sell" and self.position_side == "flat"
 
 
-class WebhookPayload(BaseModel):
-    """Generic webhook payload to determine alert type."""
+class PyramidEntryData(BaseModel):
+    """Data for pyramid entry notification."""
 
-    type: Literal["pyramid", "exit"]
-    index: int | None = None
+    group_id: str
+    pyramid_index: int
     exchange: str
-    symbol: str
-    size: float | None = None
-    alert_id: str
+    base: str
+    quote: str
+    timeframe: str
+    entry_price: float
+    position_size: float
+    notional_usdt: float
+    exchange_timestamp: str
+    received_timestamp: datetime
+    total_pyramids: int
 
 
 class SymbolRules(BaseModel):
@@ -117,9 +120,11 @@ class TradeClosedData(BaseModel):
     """Data for a closed trade notification."""
 
     trade_id: str
+    group_id: str
     exchange: str
     base: str
     quote: str
+    timeframe: str
     pyramids: list[dict]
     exit_price: float
     exit_time: datetime
@@ -127,6 +132,20 @@ class TradeClosedData(BaseModel):
     total_fees: float
     net_pnl: float
     net_pnl_percent: float
+    exchange_timestamp: str
+    received_timestamp: datetime
+
+
+class TradeHistoryItem(BaseModel):
+    """Single trade in daily report history."""
+
+    group_id: str
+    exchange: str
+    pair: str
+    timeframe: str
+    pyramids_count: int
+    pnl_usdt: float
+    pnl_percent: float
 
 
 class DailyReportData(BaseModel):
@@ -137,7 +156,9 @@ class DailyReportData(BaseModel):
     total_pyramids: int
     total_pnl_usdt: float
     total_pnl_percent: float
+    trades: list[TradeHistoryItem] = []  # Full trade history
     by_exchange: dict[str, dict]  # exchange -> {pnl, trades}
+    by_timeframe: dict[str, dict]  # timeframe -> {pnl, trades}
     by_pair: dict[str, float]  # pair -> pnl
 
 

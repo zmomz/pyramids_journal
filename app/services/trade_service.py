@@ -6,16 +6,28 @@ Core business logic for handling pyramid entries and exits.
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from ..config import settings, exchange_config
 from ..database import db
-from ..models import PyramidAlert, ExitAlert, TradeClosedData
+from ..models import TradingViewAlert, TradeClosedData, PyramidEntryData
 from .exchange_service import exchange_service
-from .symbol_normalizer import normalize_exchange, parse_symbol
+from .symbol_normalizer import normalize_exchange, parse_symbol, ParsedSymbol
 
 logger = logging.getLogger(__name__)
+
+
+def generate_group_id(base: str, exchange: str, timeframe: str, sequence: int) -> str:
+    """
+    Generate human-readable pyramid group ID.
+    Format: {BASE}_{Exchange}_{Timeframe}_{SequentialNumber}
+    Example: ETH_Kucoin_1h_001
+    """
+    exchange_formatted = exchange.capitalize()
+    seq_formatted = f"{sequence:03d}"
+    return f"{base}_{exchange_formatted}_{timeframe}_{seq_formatted}"
 
 
 @dataclass
@@ -24,31 +36,40 @@ class TradeResult:
     success: bool
     message: str
     trade_id: str | None = None
+    group_id: str | None = None
     price: float | None = None
     error: str | None = None
+    entry_data: PyramidEntryData | None = None
 
 
 class TradeService:
     """Service for managing trades and pyramids."""
 
     @classmethod
-    async def process_pyramid(cls, alert: PyramidAlert) -> TradeResult:
+    async def process_signal(
+        cls, alert: TradingViewAlert
+    ) -> tuple[TradeResult, Any]:
         """
-        Process a pyramid entry alert.
+        Process a TradingView signal (entry or exit).
 
         Args:
-            alert: Pyramid alert from TradingView
+            alert: TradingView alert with new payload structure
 
         Returns:
-            TradeResult with success status and details
+            Tuple of (TradeResult, notification_data)
+            - For entry: notification_data is PyramidEntryData
+            - For exit: notification_data is TradeClosedData
+            - For ignored: notification_data is None
         """
-        # Check idempotency
-        if await db.is_alert_processed(alert.alert_id):
-            logger.info(f"Alert {alert.alert_id} already processed, skipping")
+        received_timestamp = datetime.utcnow()
+
+        # Check idempotency using order_id
+        if await db.is_alert_processed(alert.order_id):
+            logger.info(f"Alert {alert.order_id} already processed, skipping")
             return TradeResult(
                 success=True,
                 message="Alert already processed",
-            )
+            ), None
 
         # Normalize exchange and parse symbol
         exchange = normalize_exchange(alert.exchange)
@@ -57,7 +78,7 @@ class TradeService:
                 success=False,
                 message=f"Unknown exchange: {alert.exchange}",
                 error="UNKNOWN_EXCHANGE",
-            )
+            ), None
 
         try:
             parsed = parse_symbol(alert.symbol)
@@ -66,26 +87,98 @@ class TradeService:
                 success=False,
                 message=str(e),
                 error="INVALID_SYMBOL",
+            ), None
+
+        # Determine if entry or exit
+        if alert.is_entry():
+            return await cls._process_entry(
+                alert, exchange, parsed, received_timestamp
+            )
+        elif alert.is_exit():
+            return await cls._process_exit(
+                alert, exchange, parsed, received_timestamp
+            )
+        else:
+            # Neither clear entry nor exit - log and skip
+            logger.info(
+                f"Ambiguous signal ignored: action={alert.action}, "
+                f"position_side={alert.position_side}"
+            )
+            await db.mark_alert_processed(alert.order_id)
+            return TradeResult(
+                success=True,
+                message="Signal ignored (not a clear entry/exit)",
+            ), None
+
+    @classmethod
+    async def _process_entry(
+        cls,
+        alert: TradingViewAlert,
+        exchange: str,
+        parsed: ParsedSymbol,
+        received_timestamp: datetime,
+    ) -> tuple[TradeResult, PyramidEntryData | None]:
+        """Process an entry signal."""
+
+        # Use close price from webhook
+        current_price = alert.close
+
+        # Get or create trade with timeframe-aware grouping (need pyramid_index first)
+        trade = await db.get_open_trade_by_group(
+            exchange, parsed.base, parsed.quote, alert.timeframe
+        )
+
+        if trade:
+            trade_id = trade["id"]
+            group_id = trade["group_id"]
+            # Get existing pyramids to determine index (0-based)
+            existing_pyramids = await db.get_pyramids_for_trade(trade_id)
+            pyramid_index = len(existing_pyramids)
+        else:
+            # Create new trade with new group ID
+            sequence = await db.get_next_group_sequence(
+                parsed.base, exchange, alert.timeframe
+            )
+            group_id = generate_group_id(
+                parsed.base, exchange, alert.timeframe, sequence
+            )
+            trade_id = str(uuid.uuid4())
+
+            await db.create_trade_with_group(
+                trade_id=trade_id,
+                group_id=group_id,
+                exchange=exchange,
+                base=parsed.base,
+                quote=parsed.quote,
+                timeframe=alert.timeframe,
+                position_side=alert.position_side,
+            )
+            pyramid_index = 0
+            logger.info(
+                f"Created new trade {trade_id} with group {group_id}"
             )
 
-        # Fetch current price from exchange
-        try:
-            price_data = await exchange_service.get_price(
-                exchange, parsed.base, parsed.quote
-            )
-            current_price = price_data.price
-        except Exception as e:
-            logger.error(f"Failed to fetch price: {e}")
-            return TradeResult(
-                success=False,
-                message=f"Failed to fetch price: {e}",
-                error="PRICE_FETCH_FAILED",
-            )
+        # Get capital setting for this specific pyramid (exact match or default $1000)
+        capital_usd = await db.get_pyramid_capital(
+            pyramid_index,
+            exchange=exchange,
+            base=parsed.base,
+            quote=parsed.quote,
+            timeframe=alert.timeframe,
+        )
+
+        # Calculate position size from capital / price
+        position_size = capital_usd / current_price
+        notional = capital_usd
+        logger.info(
+            f"Using capital for Pyramid #{pyramid_index}: ${capital_usd} -> "
+            f"{position_size:.6f} {parsed.base}"
+        )
 
         # Validate order if strict mode
         if settings.validation_mode == "strict":
             is_valid, error_msg = await exchange_service.validate_order(
-                exchange, parsed.base, parsed.quote, alert.size, current_price
+                exchange, parsed.base, parsed.quote, position_size, current_price
             )
             if not is_valid:
                 logger.warning(f"Order validation failed: {error_msg}")
@@ -93,134 +186,90 @@ class TradeService:
                     success=False,
                     message=error_msg,
                     error="VALIDATION_FAILED",
-                )
-
-        # Get or create trade
-        trade = await db.get_open_trade(exchange, parsed.base, parsed.quote)
-
-        if trade:
-            trade_id = trade["id"]
-        else:
-            trade_id = str(uuid.uuid4())
-            await db.create_trade(trade_id, exchange, parsed.base, parsed.quote)
-            logger.info(f"Created new trade {trade_id} for {parsed.base}/{parsed.quote} on {exchange}")
+                ), None
 
         # Calculate fees
         fee_rate = exchange_config.get_fee_rate(exchange)
-        notional = current_price * alert.size
         fee_usdt = notional * fee_rate
 
-        # Round price to tick size if we have symbol info
-        try:
-            symbol_info = await exchange_service.get_symbol_info(
-                exchange, parsed.base, parsed.quote
-            )
-            current_price = exchange_service.round_price(
-                current_price, symbol_info.tick_size
-            )
-        except Exception:
-            pass  # Use unrounded price if symbol info unavailable
-
-        # Add pyramid
+        # Add pyramid with timestamps
         pyramid_id = str(uuid.uuid4())
         await db.add_pyramid(
             pyramid_id=pyramid_id,
             trade_id=trade_id,
-            pyramid_index=alert.index,
+            pyramid_index=pyramid_index,
             entry_price=current_price,
-            position_size=alert.size,
+            position_size=position_size,
             notional_usdt=notional,
             fee_rate=fee_rate,
             fee_usdt=fee_usdt,
+            exchange_timestamp=alert.timestamp,
+            received_timestamp=received_timestamp.isoformat(),
         )
 
         # Mark alert as processed
-        await db.mark_alert_processed(alert.alert_id)
+        await db.mark_alert_processed(alert.order_id)
+
+        # Prepare entry notification data
+        entry_data = PyramidEntryData(
+            group_id=group_id,
+            pyramid_index=pyramid_index,
+            exchange=exchange,
+            base=parsed.base,
+            quote=parsed.quote,
+            timeframe=alert.timeframe,
+            entry_price=current_price,
+            position_size=position_size,
+            notional_usdt=notional,
+            exchange_timestamp=alert.timestamp,
+            received_timestamp=received_timestamp,
+            total_pyramids=pyramid_index + 1,
+        )
 
         logger.info(
-            f"Recorded pyramid {alert.index} for trade {trade_id}: "
-            f"{alert.size} {parsed.base} @ ${current_price:.2f}"
+            f"Recorded pyramid {pyramid_index} for group {group_id}: "
+            f"{position_size:.6f} {parsed.base} @ ${current_price:.2f}"
         )
 
         return TradeResult(
             success=True,
-            message=f"Pyramid {alert.index} recorded",
+            message=f"Pyramid {pyramid_index} recorded",
             trade_id=trade_id,
+            group_id=group_id,
             price=current_price,
-        )
+            entry_data=entry_data,
+        ), entry_data
 
     @classmethod
-    async def process_exit(cls, alert: ExitAlert) -> tuple[TradeResult, TradeClosedData | None]:
-        """
-        Process an exit alert.
+    async def _process_exit(
+        cls,
+        alert: TradingViewAlert,
+        exchange: str,
+        parsed: ParsedSymbol,
+        received_timestamp: datetime,
+    ) -> tuple[TradeResult, TradeClosedData | None]:
+        """Process an exit signal."""
 
-        Args:
-            alert: Exit alert from TradingView
+        # Find open trade (timeframe-aware)
+        trade = await db.get_open_trade_by_group(
+            exchange, parsed.base, parsed.quote, alert.timeframe
+        )
 
-        Returns:
-            Tuple of (TradeResult, TradeClosedData for notification)
-        """
-        # Check idempotency
-        if await db.is_alert_processed(alert.alert_id):
-            logger.info(f"Alert {alert.alert_id} already processed, skipping")
-            return TradeResult(
-                success=True,
-                message="Alert already processed",
-            ), None
-
-        # Normalize exchange and parse symbol
-        exchange = normalize_exchange(alert.exchange)
-        if not exchange:
-            return TradeResult(
-                success=False,
-                message=f"Unknown exchange: {alert.exchange}",
-                error="UNKNOWN_EXCHANGE",
-            ), None
-
-        try:
-            parsed = parse_symbol(alert.symbol)
-        except ValueError as e:
-            return TradeResult(
-                success=False,
-                message=str(e),
-                error="INVALID_SYMBOL",
-            ), None
-
-        # Find open trade
-        trade = await db.get_open_trade(exchange, parsed.base, parsed.quote)
         if not trade:
             return TradeResult(
                 success=False,
-                message=f"No open trade for {parsed.base}/{parsed.quote} on {exchange}",
+                message=(
+                    f"No open trade for {parsed.base}/{parsed.quote} "
+                    f"({alert.timeframe}) on {exchange}"
+                ),
                 error="NO_OPEN_TRADE",
             ), None
 
         trade_id = trade["id"]
+        group_id = trade.get("group_id") or trade_id[:8]
+        timeframe = trade.get("timeframe") or alert.timeframe
 
-        # Fetch exit price
-        try:
-            price_data = await exchange_service.get_price(
-                exchange, parsed.base, parsed.quote
-            )
-            exit_price = price_data.price
-        except Exception as e:
-            logger.error(f"Failed to fetch exit price: {e}")
-            return TradeResult(
-                success=False,
-                message=f"Failed to fetch price: {e}",
-                error="PRICE_FETCH_FAILED",
-            ), None
-
-        # Round exit price
-        try:
-            symbol_info = await exchange_service.get_symbol_info(
-                exchange, parsed.base, parsed.quote
-            )
-            exit_price = exchange_service.round_price(exit_price, symbol_info.tick_size)
-        except Exception:
-            pass
-
-        # Get all pyramids for this trade
+        # Get all pyramids
         pyramids = await db.get_pyramids_for_trade(trade_id)
         if not pyramids:
             return TradeResult(
@@ -228,6 +277,9 @@ class TradeService:
                 message="No pyramids found for trade",
                 error="NO_PYRAMIDS",
             ), None
+
+        # Use close price from webhook
+        exit_price = alert.close
 
         # Calculate PnL for each pyramid
         fee_rate = exchange_config.get_fee_rate(exchange)
@@ -261,6 +313,7 @@ class TradeService:
                 "index": pyramid["pyramid_index"],
                 "entry_price": entry_price,
                 "entry_time": pyramid["entry_time"],
+                "exchange_timestamp": pyramid.get("exchange_timestamp", ""),
                 "size": size,
                 "pnl_usdt": net_pnl,
                 "pnl_percent": pnl_percent,
@@ -269,42 +322,56 @@ class TradeService:
         # Calculate total PnL
         total_fees = total_entry_fees + total_exit_fees
         total_net_pnl = total_gross_pnl - total_fees
-        total_pnl_percent = (total_net_pnl / total_notional) * 100 if total_notional > 0 else 0
+        total_pnl_percent = (
+            (total_net_pnl / total_notional) * 100 if total_notional > 0 else 0
+        )
 
-        # Add exit record
+        # Add exit record with timestamps
         exit_id = str(uuid.uuid4())
-        await db.add_exit(exit_id, trade_id, exit_price, total_exit_fees)
+        await db.add_exit(
+            exit_id,
+            trade_id,
+            exit_price,
+            total_exit_fees,
+            exchange_timestamp=alert.timestamp,
+            received_timestamp=received_timestamp.isoformat(),
+        )
 
         # Close trade
         await db.close_trade(trade_id, total_net_pnl, total_pnl_percent)
 
         # Mark alert as processed
-        await db.mark_alert_processed(alert.alert_id)
+        await db.mark_alert_processed(alert.order_id)
 
         logger.info(
-            f"Closed trade {trade_id}: {len(pyramids)} pyramids, "
-            f"exit @ ${exit_price:.2f}, net PnL: ${total_net_pnl:.2f} ({total_pnl_percent:.2f}%)"
+            f"Closed trade {group_id}: {len(pyramids)} pyramids, "
+            f"exit @ ${exit_price:.2f}, net PnL: ${total_net_pnl:.2f}"
         )
 
         # Prepare notification data
         closed_data = TradeClosedData(
             trade_id=trade_id,
+            group_id=group_id,
             exchange=exchange,
             base=parsed.base,
             quote=parsed.quote,
+            timeframe=timeframe,
             pyramids=pyramid_details,
             exit_price=exit_price,
-            exit_time=datetime.utcnow(),
+            exit_time=received_timestamp,
             gross_pnl=total_gross_pnl,
             total_fees=total_fees,
             net_pnl=total_net_pnl,
             net_pnl_percent=total_pnl_percent,
+            exchange_timestamp=alert.timestamp,
+            received_timestamp=received_timestamp,
         )
 
         return TradeResult(
             success=True,
             message=f"Trade closed with {len(pyramids)} pyramids",
             trade_id=trade_id,
+            group_id=group_id,
             price=exit_price,
         ), closed_data
 

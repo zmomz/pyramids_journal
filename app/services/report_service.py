@@ -15,7 +15,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from ..config import settings
 from ..database import db
-from ..models import DailyReportData
+from ..models import DailyReportData, TradeHistoryItem
 from .telegram_service import telegram_service
 
 logger = logging.getLogger(__name__)
@@ -100,17 +100,21 @@ class ReportService:
                 total_pyramids=0,
                 total_pnl_usdt=0.0,
                 total_pnl_percent=0.0,
+                trades=[],
                 by_exchange={},
+                by_timeframe={},
                 by_pair={},
             )
 
         # Aggregate statistics
-        total_trades = len(trades)
+        total_trades_count = len(trades)
         total_pnl_usdt = 0.0
         total_notional = 0.0
         total_pyramids = 0
 
+        trade_history: list[TradeHistoryItem] = []
         by_exchange: dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
+        by_timeframe: dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
         by_pair: dict = defaultdict(float)
 
         for trade in trades:
@@ -119,20 +123,39 @@ class ReportService:
             base = trade["base"]
             quote = trade["quote"]
             pair = f"{base}/{quote}"
+            timeframe = trade.get("timeframe") or "N/A"
+            group_id = trade.get("group_id") or trade_id[:8]
 
             pnl = trade.get("total_pnl_usdt", 0) or 0
+            pnl_percent = trade.get("total_pnl_percent", 0) or 0
             total_pnl_usdt += pnl
 
             # Get pyramids for this trade
             pyramids = await db.get_pyramids_for_trade(trade_id)
-            total_pyramids += len(pyramids)
+            pyramids_count = len(pyramids)
+            total_pyramids += pyramids_count
 
             for pyramid in pyramids:
                 total_notional += pyramid.get("notional_usdt", 0) or 0
 
+            # Add to trade history
+            trade_history.append(TradeHistoryItem(
+                group_id=group_id,
+                exchange=exchange,
+                pair=pair,
+                timeframe=timeframe,
+                pyramids_count=pyramids_count,
+                pnl_usdt=pnl,
+                pnl_percent=pnl_percent,
+            ))
+
             # Aggregate by exchange
             by_exchange[exchange]["pnl"] += pnl
             by_exchange[exchange]["trades"] += 1
+
+            # Aggregate by timeframe
+            by_timeframe[timeframe]["pnl"] += pnl
+            by_timeframe[timeframe]["trades"] += 1
 
             # Aggregate by pair
             by_pair[pair] += pnl
@@ -142,27 +165,32 @@ class ReportService:
             (total_pnl_usdt / total_notional) * 100 if total_notional > 0 else 0
         )
 
+        # Sort trade history by PnL (best first)
+        trade_history.sort(key=lambda x: x.pnl_usdt, reverse=True)
+
         report_data = DailyReportData(
             date=date,
-            total_trades=total_trades,
+            total_trades=total_trades_count,
             total_pyramids=total_pyramids,
             total_pnl_usdt=total_pnl_usdt,
             total_pnl_percent=total_pnl_percent,
+            trades=trade_history,
             by_exchange=dict(by_exchange),
+            by_timeframe=dict(by_timeframe),
             by_pair=dict(by_pair),
         )
 
         # Save report to database
         await db.save_daily_report(
             date=date,
-            total_trades=total_trades,
+            total_trades=total_trades_count,
             total_pyramids=total_pyramids,
             total_pnl_usdt=total_pnl_usdt,
             report_json=json.dumps(report_data.model_dump()),
         )
 
         logger.info(
-            f"Daily report generated: {total_trades} trades, "
+            f"Daily report generated: {total_trades_count} trades, "
             f"{total_pyramids} pyramids, ${total_pnl_usdt:.2f} PnL"
         )
 

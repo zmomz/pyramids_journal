@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS trades (
     exchange TEXT NOT NULL,
     base TEXT NOT NULL,
     quote TEXT NOT NULL,
+    timeframe TEXT,
+    group_id TEXT,
+    position_side TEXT DEFAULT 'long',
     status TEXT DEFAULT 'open',
     created_at TIMESTAMP NOT NULL,
     closed_at TIMESTAMP,
@@ -33,6 +36,8 @@ CREATE TABLE IF NOT EXISTS pyramids (
     fee_usdt REAL NOT NULL,
     pnl_usdt REAL,
     pnl_percent REAL,
+    exchange_timestamp TEXT,
+    received_timestamp TEXT,
     FOREIGN KEY (trade_id) REFERENCES trades(id)
 );
 
@@ -43,7 +48,19 @@ CREATE TABLE IF NOT EXISTS exits (
     exit_price REAL NOT NULL,
     exit_time TIMESTAMP NOT NULL,
     fee_usdt REAL NOT NULL,
+    exchange_timestamp TEXT,
+    received_timestamp TEXT,
     FOREIGN KEY (trade_id) REFERENCES trades(id)
+);
+
+-- Pyramid group sequences (for generating group IDs)
+CREATE TABLE IF NOT EXISTS pyramid_group_sequences (
+    base TEXT NOT NULL,
+    exchange TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    next_sequence INTEGER DEFAULT 1,
+    updated_at TIMESTAMP,
+    PRIMARY KEY (base, exchange, timeframe)
 );
 
 -- Symbol rules cache
@@ -86,8 +103,26 @@ CREATE TABLE IF NOT EXISTS settings (
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 CREATE INDEX IF NOT EXISTS idx_trades_exchange ON trades(exchange);
+CREATE INDEX IF NOT EXISTS idx_trades_group_id ON trades(group_id);
+CREATE INDEX IF NOT EXISTS idx_trades_timeframe ON trades(timeframe);
 CREATE INDEX IF NOT EXISTS idx_pyramids_trade_id ON pyramids(trade_id);
 CREATE INDEX IF NOT EXISTS idx_symbol_rules_exchange ON symbol_rules(exchange);
+"""
+
+# Migration queries for existing databases
+MIGRATIONS = """
+-- Add new columns to trades table if not exist
+ALTER TABLE trades ADD COLUMN timeframe TEXT;
+ALTER TABLE trades ADD COLUMN group_id TEXT;
+ALTER TABLE trades ADD COLUMN position_side TEXT DEFAULT 'long';
+
+-- Add new columns to pyramids table
+ALTER TABLE pyramids ADD COLUMN exchange_timestamp TEXT;
+ALTER TABLE pyramids ADD COLUMN received_timestamp TEXT;
+
+-- Add new columns to exits table
+ALTER TABLE exits ADD COLUMN exchange_timestamp TEXT;
+ALTER TABLE exits ADD COLUMN received_timestamp TEXT;
 """
 
 
@@ -104,6 +139,55 @@ class Database:
         self._connection = await aiosqlite.connect(self.db_path)
         self._connection.row_factory = aiosqlite.Row
         await self._connection.executescript(SCHEMA)
+        await self._connection.commit()
+        # Run migrations for existing databases
+        await self._run_migrations()
+
+    async def _run_migrations(self) -> None:
+        """Run database migrations for new columns."""
+        # Check existing columns in trades table
+        cursor = await self._connection.execute("PRAGMA table_info(trades)")
+        columns = {row[1] for row in await cursor.fetchall()}
+
+        if "timeframe" not in columns:
+            await self._connection.execute(
+                "ALTER TABLE trades ADD COLUMN timeframe TEXT"
+            )
+        if "group_id" not in columns:
+            await self._connection.execute(
+                "ALTER TABLE trades ADD COLUMN group_id TEXT"
+            )
+        if "position_side" not in columns:
+            await self._connection.execute(
+                "ALTER TABLE trades ADD COLUMN position_side TEXT DEFAULT 'long'"
+            )
+
+        # Check pyramids table
+        cursor = await self._connection.execute("PRAGMA table_info(pyramids)")
+        columns = {row[1] for row in await cursor.fetchall()}
+
+        if "exchange_timestamp" not in columns:
+            await self._connection.execute(
+                "ALTER TABLE pyramids ADD COLUMN exchange_timestamp TEXT"
+            )
+        if "received_timestamp" not in columns:
+            await self._connection.execute(
+                "ALTER TABLE pyramids ADD COLUMN received_timestamp TEXT"
+            )
+
+        # Check exits table
+        cursor = await self._connection.execute("PRAGMA table_info(exits)")
+        columns = {row[1] for row in await cursor.fetchall()}
+
+        if "exchange_timestamp" not in columns:
+            await self._connection.execute(
+                "ALTER TABLE exits ADD COLUMN exchange_timestamp TEXT"
+            )
+        if "received_timestamp" not in columns:
+            await self._connection.execute(
+                "ALTER TABLE exits ADD COLUMN received_timestamp TEXT"
+            )
+
         await self._connection.commit()
 
     async def disconnect(self) -> None:
@@ -223,14 +307,16 @@ class Database:
         notional_usdt: float,
         fee_rate: float,
         fee_usdt: float,
+        exchange_timestamp: str | None = None,
+        received_timestamp: str | None = None,
     ) -> None:
         """Add a pyramid to a trade."""
         await self.connection.execute(
             """
             INSERT INTO pyramids
             (id, trade_id, pyramid_index, entry_price, position_size, notional_usdt,
-             entry_time, fee_rate, fee_usdt)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             entry_time, fee_rate, fee_usdt, exchange_timestamp, received_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 pyramid_id,
@@ -242,6 +328,8 @@ class Database:
                 datetime.utcnow().isoformat(),
                 fee_rate,
                 fee_usdt,
+                exchange_timestamp,
+                received_timestamp or datetime.utcnow().isoformat(),
             ),
         )
         await self.connection.commit()
@@ -267,15 +355,30 @@ class Database:
 
     # Exit methods
     async def add_exit(
-        self, exit_id: str, trade_id: str, exit_price: float, fee_usdt: float
+        self,
+        exit_id: str,
+        trade_id: str,
+        exit_price: float,
+        fee_usdt: float,
+        exchange_timestamp: str | None = None,
+        received_timestamp: str | None = None,
     ) -> None:
         """Add an exit record for a trade."""
         await self.connection.execute(
             """
-            INSERT INTO exits (id, trade_id, exit_price, exit_time, fee_usdt)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO exits (id, trade_id, exit_price, exit_time, fee_usdt,
+                               exchange_timestamp, received_timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (exit_id, trade_id, exit_price, datetime.utcnow().isoformat(), fee_usdt),
+            (
+                exit_id,
+                trade_id,
+                exit_price,
+                datetime.utcnow().isoformat(),
+                fee_usdt,
+                exchange_timestamp,
+                received_timestamp or datetime.utcnow().isoformat(),
+            ),
         )
         await self.connection.commit()
 
@@ -404,6 +507,189 @@ class Database:
             return False
         ignored = value.split(",")
         return f"{base}/{quote}" in ignored
+
+    # Group sequence methods
+    async def get_next_group_sequence(
+        self, base: str, exchange: str, timeframe: str
+    ) -> int:
+        """Get and increment the next sequence number for a pyramid group."""
+        cursor = await self.connection.execute(
+            """
+            SELECT next_sequence FROM pyramid_group_sequences
+            WHERE base = ? AND exchange = ? AND timeframe = ?
+            """,
+            (base, exchange, timeframe),
+        )
+        row = await cursor.fetchone()
+
+        if row:
+            seq = row["next_sequence"]
+            # Increment for next use
+            await self.connection.execute(
+                """
+                UPDATE pyramid_group_sequences
+                SET next_sequence = ?, updated_at = ?
+                WHERE base = ? AND exchange = ? AND timeframe = ?
+                """,
+                (seq + 1, datetime.utcnow().isoformat(), base, exchange, timeframe),
+            )
+        else:
+            seq = 1
+            await self.connection.execute(
+                """
+                INSERT INTO pyramid_group_sequences
+                (base, exchange, timeframe, next_sequence, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (base, exchange, timeframe, 2, datetime.utcnow().isoformat()),
+            )
+
+        await self.connection.commit()
+        return seq
+
+    async def get_open_trade_by_group(
+        self, exchange: str, base: str, quote: str, timeframe: str
+    ) -> dict | None:
+        """Get an open trade by exchange, symbol, and timeframe."""
+        cursor = await self.connection.execute(
+            """
+            SELECT * FROM trades
+            WHERE exchange = ? AND base = ? AND quote = ? AND timeframe = ? AND status = 'open'
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (exchange, base, quote, timeframe),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    async def create_trade_with_group(
+        self,
+        trade_id: str,
+        group_id: str,
+        exchange: str,
+        base: str,
+        quote: str,
+        timeframe: str,
+        position_side: str = "long",
+    ) -> None:
+        """Create a new trade with group ID and timeframe."""
+        await self.connection.execute(
+            """
+            INSERT INTO trades (id, group_id, exchange, base, quote, timeframe,
+                                position_side, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)
+            """,
+            (
+                trade_id,
+                group_id,
+                exchange,
+                base,
+                quote,
+                timeframe,
+                position_side,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        await self.connection.commit()
+
+    # Capital setting methods (per exchange/pair/timeframe/pyramid)
+    # Global default capital when no specific setting exists
+    DEFAULT_CAPITAL_USD = 1000.0
+
+    def _make_capital_key(
+        self, exchange: str, base: str, quote: str, timeframe: str, pyramid_index: int
+    ) -> str:
+        """Generate composite key for capital storage."""
+        return f"{exchange}:{base}/{quote}:{timeframe}:{pyramid_index}"
+
+    async def get_pyramid_capital(
+        self,
+        pyramid_index: int,
+        exchange: str,
+        base: str,
+        quote: str,
+        timeframe: str,
+    ) -> float:
+        """
+        Get capital setting for a specific pyramid.
+
+        Returns exact match or global default (1000 USDT).
+        """
+        import json
+        value = await self.get_setting("pyramid_capitals")
+
+        if value:
+            try:
+                capitals = json.loads(value)
+                key = self._make_capital_key(exchange, base, quote, timeframe, pyramid_index)
+                if key in capitals:
+                    return capitals[key]
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+        # Return global default
+        return self.DEFAULT_CAPITAL_USD
+
+    async def get_all_pyramid_capitals(self) -> dict[str, float]:
+        """Get all pyramid capital settings. Returns dict of {key: capital}."""
+        import json
+        value = await self.get_setting("pyramid_capitals")
+        if value:
+            try:
+                return json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                return {}
+        return {}
+
+    async def set_pyramid_capital(
+        self,
+        pyramid_index: int,
+        capital: float | None,
+        exchange: str,
+        base: str,
+        quote: str,
+        timeframe: str,
+    ) -> str:
+        """
+        Set or clear capital for a specific pyramid configuration.
+
+        Returns the key that was set/cleared.
+        Key format: exchange:pair:timeframe:index
+        """
+        import json
+
+        key = self._make_capital_key(exchange, base, quote, timeframe, pyramid_index)
+
+        value = await self.get_setting("pyramid_capitals")
+        if value:
+            try:
+                capitals = json.loads(value)
+            except json.JSONDecodeError:
+                capitals = {}
+        else:
+            capitals = {}
+
+        if capital is None:
+            capitals.pop(key, None)
+        else:
+            capitals[key] = capital
+
+        if capitals:
+            await self.set_setting("pyramid_capitals", json.dumps(capitals))
+        else:
+            await self.connection.execute(
+                "DELETE FROM settings WHERE key = 'pyramid_capitals'"
+            )
+            await self.connection.commit()
+
+        return key
+
+    async def clear_all_pyramid_capitals(self) -> None:
+        """Clear all pyramid capital settings."""
+        await self.connection.execute(
+            "DELETE FROM settings WHERE key = 'pyramid_capitals'"
+        )
+        await self.connection.commit()
 
 
 # Global database instance

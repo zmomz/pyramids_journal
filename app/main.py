@@ -15,12 +15,7 @@ from pydantic import ValidationError
 
 from .config import settings
 from .database import db
-from .models import (
-    PyramidAlert,
-    ExitAlert,
-    WebhookPayload,
-    WebhookResponse,
-)
+from .models import TradingViewAlert, WebhookResponse, TradeClosedData, PyramidEntryData
 from .services.trade_service import trade_service
 from .services.telegram_service import telegram_service
 from .services.report_service import report_service
@@ -85,7 +80,7 @@ async def webhook(
     """
     Main webhook endpoint for TradingView alerts.
 
-    Accepts JSON payload with trade signals and processes them.
+    Accepts the new unified JSON payload structure with trade signals.
     """
     # Verify webhook secret
     if not verify_webhook_secret(x_webhook_secret):
@@ -99,14 +94,17 @@ async def webhook(
         logger.error(f"Failed to parse JSON body: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
-    # Determine alert type
+    # Parse the new payload structure
     try:
-        payload = WebhookPayload(**body)
+        alert = TradingViewAlert(**body)
     except ValidationError as e:
         logger.error(f"Payload validation error: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
-    logger.info(f"Received {payload.type} alert for {payload.symbol} on {payload.exchange}")
+    logger.info(
+        f"Received signal: {alert.action} {alert.symbol} on {alert.exchange} "
+        f"(timeframe={alert.timeframe}, position_side={alert.position_side})"
+    )
 
     # Check if processing is paused
     if await db.is_paused():
@@ -118,7 +116,7 @@ async def webhook(
 
     # Check if pair is ignored
     try:
-        parsed = parse_symbol(payload.symbol)
+        parsed = parse_symbol(alert.symbol)
         if await db.is_pair_ignored(parsed.base, parsed.quote):
             logger.info(f"Pair {parsed.base}/{parsed.quote} is ignored, skipping")
             return WebhookResponse(
@@ -128,35 +126,21 @@ async def webhook(
     except ValueError:
         pass  # Will be handled by trade service
 
-    # Process based on type
-    if payload.type == "pyramid":
+    # Process the unified signal
+    result, notification_data = await trade_service.process_signal(alert)
+
+    # Send notifications
+    if result.success and notification_data:
         try:
-            alert = PyramidAlert(**body)
-        except ValidationError as e:
-            logger.error(f"Pyramid alert validation error: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid pyramid alert: {e}")
-
-        result = await trade_service.process_pyramid(alert)
-
-    elif payload.type == "exit":
-        try:
-            alert = ExitAlert(**body)
-        except ValidationError as e:
-            logger.error(f"Exit alert validation error: {e}")
-            raise HTTPException(status_code=400, detail=f"Invalid exit alert: {e}")
-
-        result, closed_data = await trade_service.process_exit(alert)
-
-        # Send Telegram notification for closed trade
-        if result.success and closed_data:
-            try:
-                await telegram_service.send_trade_closed(closed_data)
-            except Exception as e:
-                logger.error(f"Failed to send Telegram notification: {e}")
-                # Don't fail the webhook, just log the error
-
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown alert type: {payload.type}")
+            if alert.is_entry() and isinstance(notification_data, PyramidEntryData):
+                # Send entry notification immediately
+                await telegram_service.send_pyramid_entry(notification_data)
+            elif alert.is_exit() and isinstance(notification_data, TradeClosedData):
+                # Send exit notification
+                await telegram_service.send_trade_closed(notification_data)
+        except Exception as e:
+            logger.error(f"Failed to send Telegram notification: {e}")
+            # Don't fail the webhook, just log the error
 
     # Return response
     if not result.success:

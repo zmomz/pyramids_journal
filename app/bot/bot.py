@@ -29,6 +29,7 @@ BOT_COMMANDS = [
     BotCommand("setfee", "Update fee rate"),
     BotCommand("timezone", "View/set timezone"),
     BotCommand("reporttime", "Set report time"),
+    BotCommand("set_capital", "Set capital for sizing"),
     BotCommand("pause", "Pause signals"),
     BotCommand("resume", "Resume signals"),
     BotCommand("ignore", "Ignore pair"),

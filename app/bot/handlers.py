@@ -609,6 +609,116 @@ async def cmd_reporttime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@channel_only
+async def cmd_set_capital(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Set or clear capital amount per pyramid.
+
+    Usage:
+    /set_capital - Show all settings
+    /set_capital clear - Clear all settings
+    /set_capital <exchange> <pair> <timeframe> <index> <amount> - Set capital
+    """
+    from ..services.symbol_normalizer import parse_symbol, normalize_exchange
+
+    if not context.args:
+        # Show all pyramid capital settings
+        capitals = await db.get_all_pyramid_capitals()
+        if capitals:
+            lines = ["💰 Pyramid Capital Settings:", ""]
+            for key in sorted(capitals.keys()):
+                lines.append(f"├─ {key}: ${capitals[key]:,.2f}")
+            lines[-1] = lines[-1].replace("├─", "└─")  # Fix last item
+            lines.append("")
+            lines.append("Default: $1,000 USDT (when not set)")
+            await update.message.reply_text("\n".join(lines))
+        else:
+            await update.message.reply_text(
+                "💰 No custom capital set.\n"
+                "Default: $1,000 USDT per pyramid\n\n"
+                "Usage:\n"
+                "/set_capital <exchange> <pair> <tf> <index> <amount>\n\n"
+                "Examples:\n"
+                "/set_capital kucoin ETH/USDT 1h 0 500\n"
+                "/set_capital binance BTC/USDT 4h 1 2000\n\n"
+                "/set_capital clear - Clear all"
+            )
+        return
+
+    try:
+        arg = context.args[0].lower()
+
+        # Clear all capitals
+        if arg in ("clear", "reset", "off", "none") and len(context.args) == 1:
+            await db.clear_all_pyramid_capitals()
+            await update.message.reply_text(
+                "✅ All capital settings cleared.\n"
+                "Default $1,000 USDT will be used."
+            )
+            return
+
+        args = context.args
+
+        # Require all 5 args: <exchange> <pair> <timeframe> <index> <amount>
+        if len(args) < 5:
+            await update.message.reply_text(
+                "❌ Missing arguments.\n\n"
+                "Usage: /set_capital <exchange> <pair> <tf> <index> <amount>\n"
+                "Example: /set_capital kucoin ETH/USDT 1h 0 500"
+            )
+            return
+
+        exchange = normalize_exchange(args[0])
+        if not exchange:
+            await update.message.reply_text(f"❌ Unknown exchange: {args[0]}")
+            return
+
+        parsed = parse_symbol(args[1])
+        base, quote = parsed.base, parsed.quote
+        timeframe = args[2].lower()
+        pyramid_index = int(args[3])
+        capital = args[4]
+
+        if pyramid_index < 0:
+            await update.message.reply_text("❌ Pyramid index must be 0 or greater")
+            return
+
+        # Handle clear for specific key
+        if capital.lower() in ("clear", "reset", "off", "none"):
+            key = await db.set_pyramid_capital(
+                pyramid_index, None,
+                exchange=exchange, base=base, quote=quote, timeframe=timeframe
+            )
+            await update.message.reply_text(
+                f"✅ Capital cleared for: {key}\n"
+                "Default $1,000 USDT will be used."
+            )
+            return
+
+        capital_value = float(capital)
+        if capital_value <= 0:
+            await update.message.reply_text("❌ Capital must be positive")
+            return
+
+        key = await db.set_pyramid_capital(
+            pyramid_index, capital_value,
+            exchange=exchange, base=base, quote=quote, timeframe=timeframe
+        )
+        await update.message.reply_text(
+            f"✅ Capital set: {key} = ${capital_value:,.2f}\n"
+            f"Position size = ${capital_value:,.2f} / entry_price"
+        )
+
+    except ValueError as e:
+        await update.message.reply_text(
+            f"❌ Invalid input: {e}\n"
+            "Use /set_capital for usage help."
+        )
+    except Exception as e:
+        logger.error(f"Error in /set_capital: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 # ============== Control Commands ==============
 
 @channel_only
@@ -789,6 +899,7 @@ def setup_handlers(app: Application, bot) -> None:
     app.add_handler(CommandHandler("setfee", cmd_setfee))
     app.add_handler(CommandHandler("timezone", cmd_timezone))
     app.add_handler(CommandHandler("reporttime", cmd_reporttime))
+    app.add_handler(CommandHandler("set_capital", cmd_set_capital))
 
     # Control
     app.add_handler(CommandHandler("pause", cmd_pause))
@@ -800,4 +911,4 @@ def setup_handlers(app: Application, bot) -> None:
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("help", cmd_help))
 
-    logger.info("Registered 21 bot command handlers")
+    logger.info("Registered 22 bot command handlers")
