@@ -41,13 +41,26 @@ class TelegramService:
             and bool(settings.telegram_channel_id)
         )
 
+    async def get_signals_channel_id(self) -> str | None:
+        """Get signals channel ID from database or env."""
+        from ..database import db
+        try:
+            cursor = await db.connection.execute(
+                "SELECT value FROM settings WHERE key = 'signals_channel_id'"
+            )
+            row = await cursor.fetchone()
+            if row and row['value']:
+                return row['value']
+        except Exception:
+            pass
+        return settings.telegram_signals_channel_id or None
+
     @property
     def signals_channel_enabled(self) -> bool:
-        """Check if signals-only channel is configured."""
+        """Check if signals-only channel could be configured (sync check)."""
         return (
             settings.telegram_enabled
             and bool(settings.telegram_bot_token)
-            and bool(settings.telegram_signals_channel_id)
         )
 
     def _get_local_time(self, utc_time: datetime | None = None) -> datetime:
@@ -321,9 +334,13 @@ class TelegramService:
         if not self.signals_channel_enabled:
             return False
 
+        signals_channel_id = await self.get_signals_channel_id()
+        if not signals_channel_id:
+            return False
+
         try:
             await self.bot.send_message(
-                chat_id=settings.telegram_signals_channel_id,
+                chat_id=signals_channel_id,
                 text=text,
                 parse_mode=None,
             )

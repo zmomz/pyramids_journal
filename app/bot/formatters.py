@@ -233,6 +233,7 @@ def format_help() -> str:
 /setfee <exchange> <rate> - Update fee
 /timezone [zone] - View/set timezone
 /reporttime [HH:MM] - Set report time
+/signals_channel [id] - Set signals channel
 
 🎛️ Control
 /pause - Pause signal processing

@@ -610,6 +610,78 @@ async def cmd_reporttime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 @channel_only
+async def cmd_signals_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """View or set the signals-only channel ID."""
+    if not context.args:
+        # Show current setting
+        cursor = await db.connection.execute(
+            "SELECT value FROM settings WHERE key = 'signals_channel_id'"
+        )
+        row = await cursor.fetchone()
+        current = row['value'] if row else settings.telegram_signals_channel_id
+
+        if current:
+            await update.message.reply_text(f"📢 Signals channel ID: {current}")
+        else:
+            await update.message.reply_text(
+                "📢 No signals channel configured.\n\n"
+                "Usage: /signals_channel <channel_id>\n"
+                "Example: /signals_channel -1001234567890\n\n"
+                "To get channel ID:\n"
+                "1. Add the bot to your channel as admin\n"
+                "2. Forward a message from channel to @userinfobot\n\n"
+                "Use /signals_channel off to disable"
+            )
+        return
+
+    try:
+        channel_id = context.args[0]
+
+        # Handle disable
+        if channel_id.lower() in ("off", "disable", "none", "clear"):
+            await db.connection.execute(
+                "DELETE FROM settings WHERE key = 'signals_channel_id'"
+            )
+            await db.connection.commit()
+            await update.message.reply_text("✅ Signals channel disabled")
+            return
+
+        # Validate it looks like a channel ID (negative number)
+        if not channel_id.startswith("-"):
+            await update.message.reply_text(
+                "❌ Invalid channel ID. Channel IDs start with - (e.g., -1001234567890)"
+            )
+            return
+
+        # Test sending a message to verify the channel works
+        from ..services.telegram_service import telegram_service
+        try:
+            await telegram_service.bot.send_message(
+                chat_id=channel_id,
+                text="✅ Signals channel connected successfully!"
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Failed to send to channel: {e}\n\n"
+                "Make sure the bot is an admin in that channel."
+            )
+            return
+
+        # Save to database
+        await db.connection.execute(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+            ("signals_channel_id", channel_id, datetime.utcnow().isoformat())
+        )
+        await db.connection.commit()
+
+        await update.message.reply_text(f"✅ Signals channel set to: {channel_id}")
+
+    except Exception as e:
+        logger.error(f"Error in /signals_channel: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
+@channel_only
 async def cmd_set_capital(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Set or clear capital amount per pyramid.
@@ -1001,6 +1073,7 @@ def setup_handlers(app: Application, bot) -> None:
     app.add_handler(CommandHandler("setfee", cmd_setfee))
     app.add_handler(CommandHandler("timezone", cmd_timezone))
     app.add_handler(CommandHandler("reporttime", cmd_reporttime))
+    app.add_handler(CommandHandler("signals_channel", cmd_signals_channel))
     app.add_handler(CommandHandler("set_capital", cmd_set_capital))
 
     # Control
@@ -1014,4 +1087,4 @@ def setup_handlers(app: Application, bot) -> None:
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("help", cmd_help))
 
-    logger.info("Registered 23 bot command handlers")
+    logger.info("Registered 24 bot command handlers")
