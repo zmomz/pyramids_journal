@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(venvScriptspip install -r requirements.txt)",
+      "Bash(./venv/Scripts/pip.exe install:*)",
+      "Bash(curl:*)",
+      "Bash(./venv/Scripts/python.exe:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: Pyramids Journal - TradingView Signal Platform\n\nFeatures:\n- FastAPI webhook endpoint for TradingView alerts\n- Support for 6 exchanges \\(Binance, Bybit, OKX, Gate.io, Kucoin, MEXC\\)\n- Symbol normalization across different exchange naming conventions\n- Precision/notional validation from exchange APIs\n- SQLite database for trade storage\n- Telegram bot with 21 commands for monitoring and control\n- Daily performance reports with APScheduler\n- Docker containerization support\n- Configurable exchange fees\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(cat:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(python -m json.tool:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker-compose down:*)",
+      "Bash(timeout 90 bash -c 'while ! curl -s http://localhost:8001/pyramids_journal/health > /dev/null 2>&1; do sleep 2; done; echo \"\"Container ready\"\"')",
+      "Bash(docker start:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker-compose logs:*)",
+      "Bash(docker run:*)",
+      "Bash(docker info:*)",
+      "Bash(docker inspect:*)",
+      "Bash(python3:*)"
+    ]
+  }
+}

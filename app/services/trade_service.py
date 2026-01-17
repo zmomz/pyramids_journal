@@ -63,13 +63,13 @@ class TradeService:
         """
         received_timestamp = datetime.utcnow()
 
-        # Check idempotency using order_id
-        if await db.is_alert_processed(alert.order_id):
-            logger.info(f"Alert {alert.order_id} already processed, skipping")
-            return TradeResult(
-                success=True,
-                message="Alert already processed",
-            ), None
+        # Idempotency check disabled - process all signals regardless of order_id
+        # if await db.is_alert_processed(alert.order_id):
+        #     logger.info(f"Alert {alert.order_id} already processed, skipping")
+        #     return TradeResult(
+        #         success=True,
+        #         message="Alert already processed",
+        #     ), None
 
         # Normalize exchange and parse symbol
         exchange = normalize_exchange(alert.exchange)

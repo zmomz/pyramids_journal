@@ -1,0 +1,14 @@
+
+2026-01-17 00:47:08,725 - app.main - INFO - Received signal: buy KMNOUSDT on binance (timeframe=23, position_side=long)
+2026-01-17 00:47:08,726 - app.services.trade_service - INFO - Alert Master already processed, skipping
+INFO:     172.19.0.1:33106 - "POST /webhook HTTP/1.0" 200 OK
+2026-01-17 00:51:50,081 - app.main - INFO - Received signal: buy GLMUSDT on binance (timeframe=51, position_side=long)
+2026-01-17 00:51:50,083 - app.services.trade_service - INFO - Alert Master already processed, skipping
+INFO:     172.19.0.1:59816 - "POST /webhook HTTP/1.0" 200 OK
+2026-01-17 01:01:01,503 - app.main - INFO - Received signal: buy XMRUSDT on kucoin (timeframe=61, position_side=long)
+INFO:     172.19.0.1:37012 - "POST /webhook HTTP/1.0" 200 OK
+2026-01-17 01:01:01,504 - app.services.trade_service - INFO - Alert Re-Long test already processed, skipping
+2026-01-17 01:01:08,216 - app.main - INFO - Received signal: buy XMRUSDT on mexc (timeframe=61, position_side=long)
+2026-01-17 01:01:08,217 - app.services.trade_service - INFO - Alert Re-Long test already processed, skipping
+INFO:     172.19.0.1:35526 - "POST /webhook HTTP/1.0" 200 OK
+
