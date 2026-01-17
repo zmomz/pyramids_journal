@@ -41,6 +41,15 @@ class TelegramService:
             and bool(settings.telegram_channel_id)
         )
 
+    @property
+    def signals_channel_enabled(self) -> bool:
+        """Check if signals-only channel is configured."""
+        return (
+            settings.telegram_enabled
+            and bool(settings.telegram_bot_token)
+            and bool(settings.telegram_signals_channel_id)
+        )
+
     def _get_local_time(self, utc_time: datetime | None = None) -> datetime:
         """Convert UTC time to configured timezone."""
         tz = pytz.timezone(settings.timezone)
@@ -299,9 +308,51 @@ class TelegramService:
             logger.error(f"Unexpected error sending Telegram message: {e}")
             return False
 
+    async def send_to_signals_channel(self, text: str) -> bool:
+        """
+        Send a message to the signals-only channel.
+
+        Args:
+            text: Message text
+
+        Returns:
+            True if sent successfully, False otherwise
+        """
+        if not self.signals_channel_enabled:
+            return False
+
+        try:
+            await self.bot.send_message(
+                chat_id=settings.telegram_signals_channel_id,
+                text=text,
+                parse_mode=None,
+            )
+            logger.info("Telegram message sent to signals channel")
+            return True
+        except TelegramError as e:
+            logger.error(f"Failed to send to signals channel: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error sending to signals channel: {e}")
+            return False
+
+    async def send_signal_message(self, text: str) -> bool:
+        """
+        Send a signal message to both main and signals-only channels.
+
+        Args:
+            text: Message text
+
+        Returns:
+            True if sent to at least one channel successfully
+        """
+        main_result = await self.send_message(text)
+        signals_result = await self.send_to_signals_channel(text)
+        return main_result or signals_result
+
     async def send_trade_closed(self, data: TradeClosedData) -> bool:
         """
-        Send trade closed notification.
+        Send trade closed notification to both channels.
 
         Args:
             data: Trade closed data
@@ -310,11 +361,11 @@ class TelegramService:
             True if sent successfully
         """
         message = self.format_trade_closed_message(data)
-        return await self.send_message(message)
+        return await self.send_signal_message(message)
 
     async def send_pyramid_entry(self, data: PyramidEntryData) -> bool:
         """
-        Send pyramid entry notification.
+        Send pyramid entry notification to both channels.
 
         Args:
             data: Pyramid entry data
@@ -323,11 +374,11 @@ class TelegramService:
             True if sent successfully
         """
         message = self.format_pyramid_entry_message(data)
-        return await self.send_message(message)
+        return await self.send_signal_message(message)
 
     async def send_daily_report(self, data: DailyReportData) -> bool:
         """
-        Send daily report notification.
+        Send daily report notification to both channels.
 
         Args:
             data: Daily report data
@@ -336,7 +387,7 @@ class TelegramService:
             True if sent successfully
         """
         message = self.format_daily_report_message(data)
-        return await self.send_message(message)
+        return await self.send_signal_message(message)
 
 
 # Singleton instance

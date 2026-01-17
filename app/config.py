@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # Telegram
     telegram_bot_token: str = Field(default="")
     telegram_channel_id: str = Field(default="")
+    telegram_signals_channel_id: str = Field(default="")  # Signals-only channel (no controls)
     telegram_enabled: bool = Field(default=True)
 
     # Timezone
