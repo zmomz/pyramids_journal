@@ -71,7 +71,25 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 logger.error(f"Failed to fetch price: {e}")
 
         message = formatters.format_status(open_trades, prices)
-        await update.message.reply_text(message)
+
+        # Telegram has 4096 character limit per message
+        if len(message) <= 4096:
+            await update.message.reply_text(message)
+        else:
+            # Split message into chunks
+            chunks = []
+            current_chunk = ""
+            for line in message.split('\n'):
+                if len(current_chunk) + len(line) + 1 > 4096:
+                    chunks.append(current_chunk)
+                    current_chunk = line
+                else:
+                    current_chunk = current_chunk + '\n' + line if current_chunk else line
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            for chunk in chunks:
+                await update.message.reply_text(chunk)
 
     except Exception as e:
         logger.error(f"Error in /status: {e}")
@@ -916,8 +934,8 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         # Create CSV in memory
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=[
-            'id', 'exchange', 'base', 'quote', 'status',
-            'created_at', 'closed_at', 'total_pnl_usdt', 'total_pnl_percent', 'pyramid_count'
+            'id', 'exchange', 'base', 'quote', 'position_side', 'timeframe', 'group_id',
+            'status', 'created_at', 'closed_at', 'total_pnl_usdt', 'total_pnl_percent', 'pyramid_count'
         ])
         writer.writeheader()
         writer.writerows(trades)
