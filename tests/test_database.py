@@ -1587,7 +1587,10 @@ class TestDataIntegrity:
             )
         await test_db.connection.commit()
 
-        stats = await test_db.get_exchange_stats_for_period(today, today)
+        stats_list = await test_db.get_exchange_stats_for_period(today, today)
+
+        # Convert list to dict by exchange for easier assertions
+        stats = {row["exchange"]: {"pnl": row["pnl"], "trades": row["trades"]} for row in stats_list}
 
         # Binance: 100 - 30 = 70, 2 trades
         assert "binance" in stats

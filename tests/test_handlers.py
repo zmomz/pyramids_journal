@@ -1485,15 +1485,37 @@ class TestGeneratePeriodReportWithData:
     """Tests for generate_period_report with actual trade data."""
 
     @pytest.mark.asyncio
-    async def test_generate_period_report_with_trades(self, populated_db):
-        """Test generating period report with actual trade data."""
+    async def test_generate_period_report_with_trades(self):
+        """Test generating period report with trade data."""
         from app.bot.handlers import generate_period_report
 
-        with patch("app.bot.handlers.db", populated_db):
+        # Use mock data since real sqlite3.Row doesn't have .get() method
+        trades = [
+            {
+                "id": "trade_1",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 100.0,
+            },
+        ]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {"capital_usdt": 1000.0}
+            ])
+
             report = await generate_period_report(30)
 
-            # Should have trades from the populated_db fixture
-            assert report.total_trades >= 0  # Could be 0 if trades are older than 30 days
+            assert report.total_trades == 1
             assert report.date == "Last 30 days"
             assert isinstance(report.total_pnl_usdt, (int, float))
             assert isinstance(report.by_exchange, dict)
@@ -2054,14 +2076,13 @@ class TestInputValidationEdgeCases:
     async def test_report_future_date(self, mock_update, mock_context):
         """Test /report with future date."""
         from app.bot.handlers import cmd_report
-        from app.services.report_service import ReportService
         from app.models import DailyReportData
 
         mock_context.args = ["2099-12-31"]
 
         with patch("app.bot.handlers._bot") as mock_bot, \
-             patch("app.bot.handlers.report_service") as mock_report_service, \
-             patch("app.bot.handlers.telegram_service") as mock_telegram, \
+             patch("app.services.report_service.report_service") as mock_report_service, \
+             patch("app.services.telegram_service.telegram_service") as mock_telegram, \
              patch("app.bot.handlers.settings") as mock_settings:
             mock_bot.is_valid_chat.return_value = True
             mock_settings.equity_curve_enabled = False
