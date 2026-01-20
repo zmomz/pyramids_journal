@@ -212,8 +212,9 @@ class ReportService:
             win_loss_ratio = (avg_win / avg_loss) if avg_loss > 0 else avg_win
 
             # Max drawdown from equity curve
+            # Drawdown = drop from peak to trough
+            # Drawdown % = relative to total capital deployed (not peak PnL)
             max_drawdown_usdt = 0.0
-            max_drawdown_percent = 0.0
             peak = 0.0
             for point in equity_points:
                 if point.cumulative_pnl > peak:
@@ -221,7 +222,9 @@ class ReportService:
                 drawdown = peak - point.cumulative_pnl
                 if drawdown > max_drawdown_usdt:
                     max_drawdown_usdt = drawdown
-                    max_drawdown_percent = (drawdown / peak * 100) if peak > 0 else 0
+
+            # Calculate drawdown % relative to total capital deployed
+            max_drawdown_percent = (max_drawdown_usdt / total_capital * 100) if total_capital > 0 else 0
 
             chart_stats = ChartStats(
                 total_net_pnl=total_pnl_usdt,
