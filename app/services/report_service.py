@@ -169,10 +169,15 @@ class ReportService:
         trade_history.sort(key=lambda x: x.pnl_usdt, reverse=True)
 
         # Build equity curve data points
+        # Start from cumulative PnL of all previous days
         equity_points: list[EquityPoint] = []
+        previous_cumulative_pnl = 0.0
         if settings.equity_curve_enabled:
+            # Get cumulative realized PnL from all trades BEFORE this date
+            previous_cumulative_pnl = await db.get_cumulative_pnl_before_date(date)
+
             equity_data = await db.get_equity_curve_data(date)
-            cumulative_pnl = 0.0
+            cumulative_pnl = previous_cumulative_pnl  # Start from previous total
             for row in equity_data:
                 cumulative_pnl += row.get("total_pnl_usdt", 0) or 0
                 closed_at = row.get("closed_at")
@@ -192,30 +197,29 @@ class ReportService:
         # Calculate chart statistics for footer
         chart_stats = None
         if settings.equity_curve_enabled and trade_history:
-            # Count wins and losses
+            # Count wins and losses (for TODAY only)
             wins = [t for t in trade_history if t.pnl_usdt > 0]
             losses = [t for t in trade_history if t.pnl_usdt < 0]
             num_wins = len(wins)
             num_losses = len(losses)
 
-            # Win rate
+            # Win rate (for today)
             win_rate = (num_wins / total_trades_count * 100) if total_trades_count > 0 else 0
 
-            # Profit factor (total wins / total losses)
+            # Profit factor (total wins / total losses) - for today
             total_wins = sum(t.pnl_usdt for t in wins) if wins else 0
             total_losses = abs(sum(t.pnl_usdt for t in losses)) if losses else 0
             profit_factor = (total_wins / total_losses) if total_losses > 0 else total_wins
 
-            # Win/Loss ratio (avg win / avg loss)
+            # Win/Loss ratio (avg win / avg loss) - for today
             avg_win = (total_wins / num_wins) if num_wins > 0 else 0
             avg_loss = (total_losses / num_losses) if num_losses > 0 else 0
             win_loss_ratio = (avg_win / avg_loss) if avg_loss > 0 else avg_win
 
-            # Max drawdown from equity curve
-            # Drawdown = drop from peak to trough
-            # Drawdown % = relative to total capital deployed (not peak PnL)
+            # Max drawdown from equity curve (for today's session)
+            # Start peak from previous cumulative PnL, not 0
             max_drawdown_usdt = 0.0
-            peak = 0.0
+            peak = previous_cumulative_pnl  # Start from previous day's ending balance
             for point in equity_points:
                 if point.cumulative_pnl > peak:
                     peak = point.cumulative_pnl
@@ -223,11 +227,14 @@ class ReportService:
                 if drawdown > max_drawdown_usdt:
                     max_drawdown_usdt = drawdown
 
-            # Calculate drawdown % relative to total capital deployed
+            # Calculate drawdown % relative to total capital deployed today
             max_drawdown_percent = (max_drawdown_usdt / total_capital * 100) if total_capital > 0 else 0
 
+            # Final cumulative PnL (includes previous days)
+            final_cumulative_pnl = previous_cumulative_pnl + total_pnl_usdt
+
             chart_stats = ChartStats(
-                total_net_pnl=total_pnl_usdt,
+                total_net_pnl=final_cumulative_pnl,  # Cumulative including previous days
                 max_drawdown_percent=max_drawdown_percent,
                 max_drawdown_usdt=max_drawdown_usdt,
                 num_trades=total_trades_count,

@@ -460,6 +460,379 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def get_cumulative_pnl_before_date(self, date: str) -> float:
+        """
+        Get the cumulative realized PnL from all closed trades BEFORE the given date.
+        This is used to start the equity curve from the correct previous value.
+        """
+        cursor = await self.connection.execute(
+            """
+            SELECT COALESCE(SUM(total_pnl_usdt), 0) as cumulative_pnl
+            FROM trades
+            WHERE status = 'closed' AND DATE(closed_at) < ?
+            """,
+            (date,),
+        )
+        row = await cursor.fetchone()
+        return row["cumulative_pnl"] if row else 0.0
+
+    # =========== Period-Based Query Methods ===========
+
+    async def get_realized_pnl_for_period(
+        self, start_date: str | None, end_date: str | None
+    ) -> tuple[float, int]:
+        """
+        Get realized PnL and trade count for a date range.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD) or None for all-time
+            end_date: End date (YYYY-MM-DD) or None for all-time
+
+        Returns:
+            Tuple of (total_pnl, trade_count)
+        """
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT COALESCE(SUM(total_pnl_usdt), 0) as pnl, COUNT(*) as count
+                FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                """,
+                (start_date, end_date),
+            )
+        else:
+            cursor = await self.connection.execute(
+                """
+                SELECT COALESCE(SUM(total_pnl_usdt), 0) as pnl, COUNT(*) as count
+                FROM trades WHERE status = 'closed'
+                """
+            )
+        row = await cursor.fetchone()
+        return (row["pnl"] or 0.0, row["count"] or 0) if row else (0.0, 0)
+
+    async def get_statistics_for_period(
+        self, start_date: str | None, end_date: str | None
+    ) -> dict:
+        """
+        Get trading statistics for a date range.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD) or None for all-time
+            end_date: End date (YYYY-MM-DD) or None for all-time
+
+        Returns:
+            Dict with statistics: total_trades, win_rate, total_pnl, etc.
+        """
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT total_pnl_usdt FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                """,
+                (start_date, end_date),
+            )
+        else:
+            cursor = await self.connection.execute(
+                "SELECT total_pnl_usdt FROM trades WHERE status = 'closed'"
+            )
+
+        rows = await cursor.fetchall()
+        pnls = [row["total_pnl_usdt"] or 0 for row in rows]
+
+        if not pnls:
+            return {
+                "total_trades": 0,
+                "win_rate": 0.0,
+                "total_pnl": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "best_trade": 0.0,
+                "worst_trade": 0.0,
+                "profit_factor": 0.0,
+                "avg_trade": 0.0,
+            }
+
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p < 0]
+        total_wins = sum(wins) if wins else 0
+        total_losses = abs(sum(losses)) if losses else 0
+
+        return {
+            "total_trades": len(pnls),
+            "win_rate": (len(wins) / len(pnls) * 100) if pnls else 0,
+            "total_pnl": sum(pnls),
+            "avg_win": (total_wins / len(wins)) if wins else 0,
+            "avg_loss": (sum(losses) / len(losses)) if losses else 0,
+            "best_trade": max(pnls) if pnls else 0,
+            "worst_trade": min(pnls) if pnls else 0,
+            "profit_factor": (total_wins / total_losses) if total_losses > 0 else total_wins,
+            "avg_trade": (sum(pnls) / len(pnls)) if pnls else 0,
+        }
+
+    async def get_best_pairs_for_period(
+        self, start_date: str | None, end_date: str | None, limit: int = 5
+    ) -> list[dict]:
+        """Get top profitable pairs for a date range."""
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT base || '/' || quote as pair,
+                       SUM(total_pnl_usdt) as pnl,
+                       COUNT(*) as trades
+                FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                GROUP BY base, quote
+                ORDER BY pnl DESC
+                LIMIT ?
+                """,
+                (start_date, end_date, limit),
+            )
+        else:
+            cursor = await self.connection.execute(
+                """
+                SELECT base || '/' || quote as pair,
+                       SUM(total_pnl_usdt) as pnl,
+                       COUNT(*) as trades
+                FROM trades WHERE status = 'closed'
+                GROUP BY base, quote
+                ORDER BY pnl DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_worst_pairs_for_period(
+        self, start_date: str | None, end_date: str | None, limit: int = 5
+    ) -> list[dict]:
+        """Get top losing pairs for a date range."""
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT base || '/' || quote as pair,
+                       SUM(total_pnl_usdt) as pnl,
+                       COUNT(*) as trades
+                FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                GROUP BY base, quote
+                ORDER BY pnl ASC
+                LIMIT ?
+                """,
+                (start_date, end_date, limit),
+            )
+        else:
+            cursor = await self.connection.execute(
+                """
+                SELECT base || '/' || quote as pair,
+                       SUM(total_pnl_usdt) as pnl,
+                       COUNT(*) as trades
+                FROM trades WHERE status = 'closed'
+                GROUP BY base, quote
+                ORDER BY pnl ASC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_trades_for_period(
+        self, start_date: str | None, end_date: str | None, limit: int = 50
+    ) -> list[dict]:
+        """Get closed trades for a date range."""
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT * FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                ORDER BY closed_at DESC
+                LIMIT ?
+                """,
+                (start_date, end_date, limit),
+            )
+        else:
+            cursor = await self.connection.execute(
+                """
+                SELECT * FROM trades
+                WHERE status = 'closed'
+                ORDER BY closed_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_drawdown_for_period(
+        self, start_date: str | None, end_date: str | None
+    ) -> dict:
+        """
+        Calculate drawdown metrics for a date range.
+
+        Returns:
+            Dict with current_equity, peak, current_drawdown, max_drawdown,
+            max_drawdown_percent, trade_count
+        """
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT total_pnl_usdt, closed_at FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                ORDER BY closed_at ASC
+                """,
+                (start_date, end_date),
+            )
+        else:
+            cursor = await self.connection.execute(
+                """
+                SELECT total_pnl_usdt, closed_at FROM trades
+                WHERE status = 'closed'
+                ORDER BY closed_at ASC
+                """
+            )
+
+        rows = await cursor.fetchall()
+        if not rows:
+            return {
+                "current_equity": 0.0,
+                "peak": 0.0,
+                "current_drawdown": 0.0,
+                "max_drawdown": 0.0,
+                "max_drawdown_percent": 0.0,
+                "trade_count": 0,
+            }
+
+        equity = 0.0
+        peak = 0.0
+        max_dd = 0.0
+
+        for row in rows:
+            equity += row["total_pnl_usdt"] or 0
+            if equity > peak:
+                peak = equity
+            dd = peak - equity
+            if dd > max_dd:
+                max_dd = dd
+
+        current_dd = peak - equity
+        max_dd_percent = (max_dd / peak * 100) if peak > 0 else 0
+
+        return {
+            "current_equity": equity,
+            "peak": peak,
+            "current_drawdown": current_dd,
+            "max_drawdown": max_dd,
+            "max_drawdown_percent": max_dd_percent,
+            "trade_count": len(rows),
+        }
+
+    async def get_streak_for_period(
+        self, start_date: str | None, end_date: str | None
+    ) -> dict:
+        """
+        Calculate win/loss streaks for a date range.
+
+        Returns:
+            Dict with current, longest_win, longest_loss
+        """
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT total_pnl_usdt FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                ORDER BY closed_at DESC
+                """,
+                (start_date, end_date),
+            )
+        else:
+            cursor = await self.connection.execute(
+                """
+                SELECT total_pnl_usdt FROM trades
+                WHERE status = 'closed'
+                ORDER BY closed_at DESC
+                """
+            )
+
+        rows = await cursor.fetchall()
+        pnls = [row["total_pnl_usdt"] or 0 for row in rows]
+
+        if not pnls:
+            return {"current": 0, "longest_win": 0, "longest_loss": 0}
+
+        # Current streak (from most recent)
+        current = 0
+        if pnls:
+            is_win = pnls[0] > 0
+            for pnl in pnls:
+                if (pnl > 0) == is_win:
+                    current += 1 if is_win else -1
+                else:
+                    break
+
+        # Longest streaks (chronological order)
+        reversed_pnls = list(reversed(pnls))
+        longest_win = 0
+        longest_loss = 0
+        streak = 0
+        prev_win = None
+
+        for pnl in reversed_pnls:
+            is_win = pnl > 0
+            if prev_win is None or is_win == prev_win:
+                streak += 1
+            else:
+                if prev_win:
+                    longest_win = max(longest_win, streak)
+                else:
+                    longest_loss = max(longest_loss, streak)
+                streak = 1
+            prev_win = is_win
+
+        # Check final streak
+        if prev_win is not None:
+            if prev_win:
+                longest_win = max(longest_win, streak)
+            else:
+                longest_loss = max(longest_loss, streak)
+
+        return {
+            "current": current,
+            "longest_win": longest_win,
+            "longest_loss": longest_loss,
+        }
+
+    async def get_exchange_stats_for_period(
+        self, start_date: str | None, end_date: str | None
+    ) -> list[dict]:
+        """Get PnL breakdown by exchange for a date range."""
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT exchange,
+                       SUM(total_pnl_usdt) as pnl,
+                       COUNT(*) as trades
+                FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                GROUP BY exchange
+                ORDER BY pnl DESC
+                """,
+                (start_date, end_date),
+            )
+        else:
+            cursor = await self.connection.execute(
+                """
+                SELECT exchange,
+                       SUM(total_pnl_usdt) as pnl,
+                       COUNT(*) as trades
+                FROM trades WHERE status = 'closed'
+                GROUP BY exchange
+                ORDER BY pnl DESC
+                """
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
     async def save_daily_report(
         self,
         date: str,

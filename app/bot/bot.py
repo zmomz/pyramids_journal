@@ -12,19 +12,20 @@ from ..config import settings
 
 # Commands to register with Telegram menu
 BOT_COMMANDS = [
+    BotCommand("menu", "Interactive menu"),
     BotCommand("ping", "Health check"),
     BotCommand("status", "Open trades with unrealized PnL"),
     BotCommand("live", "Real-time prices"),
-    BotCommand("report", "Performance report"),
-    BotCommand("stats", "Overall statistics"),
-    BotCommand("pnl", "Total PnL summary"),
-    BotCommand("best", "Top 5 profitable pairs"),
-    BotCommand("worst", "Top 5 losing pairs"),
-    BotCommand("streak", "Win/loss streak"),
-    BotCommand("drawdown", "Drawdown info"),
-    BotCommand("trades", "Recent trades"),
+    BotCommand("report", "Performance report [period]"),
+    BotCommand("stats", "Statistics [period]"),
+    BotCommand("pnl", "PnL summary [period]"),
+    BotCommand("best", "Top 5 pairs [period]"),
+    BotCommand("worst", "Bottom 5 pairs [period]"),
+    BotCommand("streak", "Win/loss streak [period]"),
+    BotCommand("drawdown", "Drawdown info [period]"),
+    BotCommand("trades", "Recent trades [n|period]"),
     BotCommand("history", "History for pair"),
-    BotCommand("exchange", "Stats by exchange"),
+    BotCommand("exchange", "Stats by exchange [period]"),
     BotCommand("fees", "Show exchange fees"),
     BotCommand("setfee", "Update fee rate"),
     BotCommand("timezone", "View/set timezone"),
@@ -85,7 +86,10 @@ class TelegramBot:
 
         # Import and setup handlers
         from .handlers import setup_handlers
+        from .menu import setup_menu_handlers
+
         setup_handlers(self._app, self)
+        setup_menu_handlers(self._app, self)
 
         logger.info("Telegram bot initialized")
 

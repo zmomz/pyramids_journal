@@ -94,10 +94,13 @@ def format_live(prices: dict[str, dict]) -> str:
 
 
 def format_stats(stats: dict[str, Any]) -> str:
-    """Format overall statistics message."""
+    """Format statistics message with optional period label."""
+    period_label = stats.get('period_label', 'All-Time')
+    title = f"📊 Statistics - {period_label}"
+
     lines = [
-        "📊 Overall Statistics",
-        "",
+        title,
+        "━" * 30,
         f"Total Trades: {stats.get('total_trades', 0)}",
         f"Win Rate: {stats.get('win_rate', 0):.1f}%",
         f"Total PnL: {format_pnl(stats.get('total_pnl', 0))}",
@@ -132,15 +135,15 @@ def format_pnl_summary(realized: float, unrealized: float) -> str:
     return "\n".join(lines)
 
 
-def format_best_worst(pairs: list[dict], is_best: bool) -> str:
-    """Format best/worst pairs message."""
+def format_best_worst(pairs: list[dict], is_best: bool, period_label: str = "All-Time") -> str:
+    """Format best/worst pairs message with optional period label."""
     emoji = "🏆" if is_best else "📉"
     title = "Best Pairs" if is_best else "Worst Pairs"
 
     if not pairs:
         return f"{emoji} No data available"
 
-    lines = [f"{emoji} {title}", ""]
+    lines = [f"{emoji} {title} - {period_label}", "━" * 30]
 
     for i, pair in enumerate(pairs[:5], 1):
         medal = ["🥇", "🥈", "🥉", "4.", "5."][i - 1]
@@ -149,8 +152,8 @@ def format_best_worst(pairs: list[dict], is_best: bool) -> str:
     return "\n".join(lines)
 
 
-def format_streak(current: int, longest_win: int, longest_loss: int) -> str:
-    """Format streak information."""
+def format_streak(current: int, longest_win: int, longest_loss: int, period_label: str = "All-Time") -> str:
+    """Format streak information with optional period label."""
     if current > 0:
         streak_text = f"🔥 {current} wins"
     elif current < 0:
@@ -159,8 +162,8 @@ def format_streak(current: int, longest_win: int, longest_loss: int) -> str:
         streak_text = "➖ No active streak"
 
     lines = [
-        "📊 Streak Info",
-        "",
+        f"📊 Streak Info - {period_label}",
+        "━" * 30,
         f"Current: {streak_text}",
         f"Longest Win Streak: {longest_win}",
         f"Longest Loss Streak: {longest_loss}",
@@ -168,11 +171,11 @@ def format_streak(current: int, longest_win: int, longest_loss: int) -> str:
     return "\n".join(lines)
 
 
-def format_drawdown(max_dd: float, max_dd_percent: float, current_dd: float) -> str:
-    """Format drawdown information."""
+def format_drawdown(max_dd: float, max_dd_percent: float, current_dd: float, period_label: str = "All-Time") -> str:
+    """Format drawdown information with optional period label."""
     lines = [
-        "📉 Drawdown Info",
-        "",
+        f"📉 Drawdown Info - {period_label}",
+        "━" * 30,
         f"Max Drawdown: {format_pnl(-max_dd)} ({format_percent(-max_dd_percent)})",
         f"Current Drawdown: {format_pnl(-current_dd)}",
     ]
@@ -214,24 +217,27 @@ def format_help() -> str:
     """Format help message with all commands."""
     return """📖 Available Commands
 
+🎛️ Interactive Menu
+/menu - Open interactive menu with buttons
+
 📊 Monitoring
 /status - Open trades with unrealized PnL
 /live - Real-time prices
 /ping - Health check
 
-📈 Reporting
-/report [daily|weekly|monthly] - Performance report
-/stats - Overall statistics
-/pnl - Total PnL summary
-/best - Top 5 profitable pairs
-/worst - Top 5 losing pairs
-/streak - Win/loss streak
-/drawdown - Drawdown info
+📈 Reporting (all support: today|week|month|YYYY-MM-DD)
+/report [period] - Performance report with chart
+/stats [period] - Overall statistics
+/pnl [period] - PnL summary
+/best [period] - Top 5 profitable pairs
+/worst [period] - Top 5 losing pairs
+/streak [period] - Win/loss streak
+/drawdown [period] - Drawdown info
 
 📋 History
-/trades [n] - Last n trades
+/trades [n|period] - Recent trades
 /history <pair> - History for pair
-/exchange <name> - Stats by exchange
+/exchange <name> [period] - Stats by exchange
 
 ⚙️ Configuration
 /fees - Show exchange fees
@@ -252,4 +258,6 @@ def format_help() -> str:
 🗑️ Data Management
 /reset - Reset/clear data options
 
-/help - This message"""
+/help - This message
+
+📅 Period options: today, yesterday, week, month, or YYYY-MM-DD"""

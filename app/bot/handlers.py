@@ -8,7 +8,9 @@ import csv
 import io
 import logging
 from datetime import datetime, timedelta
+from typing import Tuple
 
+import pytz
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -18,6 +20,63 @@ from ..services.exchange_service import exchange_service
 from . import formatters
 
 logger = logging.getLogger(__name__)
+
+
+def parse_date_filter(args: list[str]) -> Tuple[str | None, str | None, str]:
+    """
+    Parse date filter from command arguments.
+
+    Args:
+        args: List of command arguments
+
+    Returns:
+        Tuple of (start_date, end_date, period_label)
+        - start_date: YYYY-MM-DD or None for all-time
+        - end_date: YYYY-MM-DD or None for all-time
+        - period_label: Human readable label for the period
+
+    Examples:
+        [] -> (None, None, "All-Time")
+        ["today"] -> ("2026-01-20", "2026-01-20", "Today (2026-01-20)")
+        ["yesterday"] -> ("2026-01-19", "2026-01-19", "Yesterday (2026-01-19)")
+        ["week"] -> ("2026-01-13", "2026-01-20", "Last 7 Days")
+        ["month"] -> ("2025-12-21", "2026-01-20", "Last 30 Days")
+        ["2026-01-15"] -> ("2026-01-15", "2026-01-15", "2026-01-15")
+    """
+    tz = pytz.timezone(settings.timezone)
+    now = datetime.now(tz)
+    today = now.strftime("%Y-%m-%d")
+
+    if not args:
+        return None, None, "All-Time"
+
+    period = args[0].lower()
+
+    if period == "today":
+        return today, today, f"Today ({today})"
+
+    elif period == "yesterday":
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        return yesterday, yesterday, f"Yesterday ({yesterday})"
+
+    elif period == "week":
+        start = (now - timedelta(days=6)).strftime("%Y-%m-%d")
+        return start, today, "Last 7 Days"
+
+    elif period == "month":
+        start = (now - timedelta(days=29)).strftime("%Y-%m-%d")
+        return start, today, "Last 30 Days"
+
+    elif "-" in period and len(period) == 10:
+        # Specific date YYYY-MM-DD
+        try:
+            datetime.strptime(period, "%Y-%m-%d")  # Validate format
+            return period, period, period
+        except ValueError:
+            return None, None, "All-Time"
+
+    else:
+        return None, None, "All-Time"
 
 # Global reference to bot instance (set in setup_handlers)
 _bot = None
@@ -268,9 +327,24 @@ async def generate_period_report(days: int):
 
 @channel_only
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show overall statistics."""
+    """Show statistics with optional date filtering.
+
+    Usage:
+        /stats - All-time statistics
+        /stats today - Today's statistics
+        /stats yesterday - Yesterday's statistics
+        /stats week - Last 7 days
+        /stats month - Last 30 days
+        /stats 2026-01-20 - Specific date
+    """
     try:
-        stats = await get_statistics()
+        # Parse date filter
+        start_date, end_date, period_label = parse_date_filter(context.args or [])
+
+        # Get statistics for the period
+        stats = await db.get_statistics_for_period(start_date, end_date)
+        stats['period_label'] = period_label
+
         message = formatters.format_stats(stats)
         await update.message.reply_text(message)
     except Exception as e:
@@ -279,69 +353,81 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def get_statistics() -> dict:
-    """Calculate overall trading statistics."""
-    cursor = await db.connection.execute(
-        "SELECT * FROM trades WHERE status = 'closed'"
-    )
-    trades = [dict(r) for r in await cursor.fetchall()]
-
-    if not trades:
-        return {
-            'total_trades': 0, 'win_rate': 0, 'total_pnl': 0,
-            'avg_win': 0, 'avg_loss': 0, 'best_trade': 0,
-            'worst_trade': 0, 'profit_factor': 0, 'avg_trade': 0
-        }
-
-    pnls = [t['total_pnl_usdt'] or 0 for t in trades]
-    wins = [p for p in pnls if p > 0]
-    losses = [p for p in pnls if p < 0]
-
-    total_wins = sum(wins) if wins else 0
-    total_losses = abs(sum(losses)) if losses else 0
-
-    return {
-        'total_trades': len(trades),
-        'win_rate': (len(wins) / len(trades) * 100) if trades else 0,
-        'total_pnl': sum(pnls),
-        'avg_win': (total_wins / len(wins)) if wins else 0,
-        'avg_loss': (sum(losses) / len(losses)) if losses else 0,
-        'best_trade': max(pnls) if pnls else 0,
-        'worst_trade': min(pnls) if pnls else 0,
-        'profit_factor': (total_wins / total_losses) if total_losses > 0 else float('inf'),
-        'avg_trade': (sum(pnls) / len(pnls)) if pnls else 0,
-    }
+    """Calculate overall trading statistics (legacy function for backward compat)."""
+    return await db.get_statistics_for_period(None, None)
 
 
 @channel_only
 async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show total PnL summary."""
+    """Show PnL summary with optional date filtering.
+
+    Usage:
+        /pnl - All-time realized + unrealized
+        /pnl today - Today's closed trades
+        /pnl yesterday - Yesterday's closed trades
+        /pnl week - Last 7 days
+        /pnl month - Last 30 days
+        /pnl 2026-01-20 - Specific date
+    """
     try:
-        # Realized PnL
-        cursor = await db.connection.execute(
-            "SELECT COALESCE(SUM(total_pnl_usdt), 0) as realized FROM trades WHERE status = 'closed'"
-        )
-        row = await cursor.fetchone()
-        realized = row['realized'] if row else 0
+        # Parse date filter
+        start_date, end_date, period_label = parse_date_filter(context.args or [])
 
-        # Unrealized PnL
-        cursor = await db.connection.execute(
-            "SELECT * FROM trades WHERE status = 'open'"
-        )
-        open_trades = [dict(r) for r in await cursor.fetchall()]
+        # Get realized PnL for the period
+        realized, trade_count = await db.get_realized_pnl_for_period(start_date, end_date)
 
-        unrealized = 0
-        for trade in open_trades:
-            try:
-                price_data = await exchange_service.get_price(
-                    trade['exchange'], trade['base'], trade['quote']
-                )
-                pyramids = await db.get_pyramids_for_trade(trade['id'])
-                for p in pyramids:
-                    unrealized += (price_data.price - p['entry_price']) * p['position_size']
-            except Exception:
-                pass
+        # For all-time, also show unrealized
+        unrealized = 0.0
+        open_count = 0
+        if start_date is None:
+            # All-time view: include unrealized
+            cursor = await db.connection.execute(
+                "SELECT * FROM trades WHERE status = 'open'"
+            )
+            open_trades = [dict(r) for r in await cursor.fetchall()]
+            open_count = len(open_trades)
 
-        message = formatters.format_pnl_summary(realized, unrealized)
+            for trade in open_trades:
+                try:
+                    price_data = await exchange_service.get_price(
+                        trade['exchange'], trade['base'], trade['quote']
+                    )
+                    pyramids = await db.get_pyramids_for_trade(trade['id'])
+                    for p in pyramids:
+                        unrealized += (price_data.price - p['entry_price']) * p['position_size']
+                except Exception:
+                    pass
+
+        # Format message based on period
+        if start_date is None:
+            # All-time format (original)
+            message = formatters.format_pnl_summary(realized, unrealized)
+        else:
+            # Period-specific format
+            total = realized + unrealized
+            pnl_emoji = "🟢" if total >= 0 else "🔻"
+
+            lines = [
+                f"💰 PnL Summary - {period_label}",
+                "━" * 30,
+                f"Closed Trades: {formatters.format_pnl(realized)} ({trade_count} trades)",
+            ]
+
+            if open_count > 0:
+                lines.append(f"Open Trades: {formatters.format_pnl(unrealized)} ({open_count} trades)")
+                lines.append("━" * 30)
+                lines.append(f"{pnl_emoji} Period Net: {formatters.format_pnl(total)}")
+            else:
+                lines.append("━" * 30)
+                lines.append(f"{pnl_emoji} Period Net: {formatters.format_pnl(realized)}")
+
+            # Also show cumulative context
+            all_time_realized, _ = await db.get_realized_pnl_for_period(None, None)
+            lines.append("")
+            lines.append(f"💼 Cumulative Realized: {formatters.format_pnl(all_time_realized)}")
+
+            message = "\n".join(lines)
+
         await update.message.reply_text(message)
 
     except Exception as e:
@@ -351,23 +437,22 @@ async def cmd_pnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @channel_only
 async def cmd_best(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show top 5 profitable pairs."""
+    """Show top 5 profitable pairs with optional date filtering.
+
+    Usage:
+        /best - All-time best pairs
+        /best today - Today's best pairs
+        /best week - Last 7 days
+        /best month - Last 30 days
+        /best 2026-01-20 - Specific date
+    """
     try:
-        cursor = await db.connection.execute(
-            """
-            SELECT base || '/' || quote as pair,
-                   SUM(total_pnl_usdt) as pnl,
-                   COUNT(*) as trades
-            FROM trades
-            WHERE status = 'closed'
-            GROUP BY base, quote
-            ORDER BY pnl DESC
-            LIMIT 5
-            """
-        )
-        rows = await cursor.fetchall()
-        pairs = [dict(r) for r in rows]
-        message = formatters.format_best_worst(pairs, is_best=True)
+        # Parse date filter
+        start_date, end_date, period_label = parse_date_filter(context.args or [])
+
+        # Get best pairs for the period
+        pairs = await db.get_best_pairs_for_period(start_date, end_date, limit=5)
+        message = formatters.format_best_worst(pairs, is_best=True, period_label=period_label)
         await update.message.reply_text(message)
     except Exception as e:
         logger.error(f"Error in /best: {e}")
@@ -376,23 +461,22 @@ async def cmd_best(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @channel_only
 async def cmd_worst(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show top 5 losing pairs."""
+    """Show top 5 losing pairs with optional date filtering.
+
+    Usage:
+        /worst - All-time worst pairs
+        /worst today - Today's worst pairs
+        /worst week - Last 7 days
+        /worst month - Last 30 days
+        /worst 2026-01-20 - Specific date
+    """
     try:
-        cursor = await db.connection.execute(
-            """
-            SELECT base || '/' || quote as pair,
-                   SUM(total_pnl_usdt) as pnl,
-                   COUNT(*) as trades
-            FROM trades
-            WHERE status = 'closed'
-            GROUP BY base, quote
-            ORDER BY pnl ASC
-            LIMIT 5
-            """
-        )
-        rows = await cursor.fetchall()
-        pairs = [dict(r) for r in rows]
-        message = formatters.format_best_worst(pairs, is_best=False)
+        # Parse date filter
+        start_date, end_date, period_label = parse_date_filter(context.args or [])
+
+        # Get worst pairs for the period
+        pairs = await db.get_worst_pairs_for_period(start_date, end_date, limit=5)
+        message = formatters.format_best_worst(pairs, is_best=False, period_label=period_label)
         await update.message.reply_text(message)
     except Exception as e:
         logger.error(f"Error in /worst: {e}")
@@ -401,52 +485,28 @@ async def cmd_worst(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @channel_only
 async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show win/loss streak information."""
+    """Show win/loss streak information with optional date filtering.
+
+    Usage:
+        /streak - All-time streaks
+        /streak today - Today's streaks
+        /streak week - Last 7 days
+        /streak month - Last 30 days
+        /streak 2026-01-20 - Specific date
+    """
     try:
-        cursor = await db.connection.execute(
-            """
-            SELECT total_pnl_usdt FROM trades
-            WHERE status = 'closed'
-            ORDER BY closed_at DESC
-            """
+        # Parse date filter
+        start_date, end_date, period_label = parse_date_filter(context.args or [])
+
+        # Get streak info for the period
+        streak_data = await db.get_streak_for_period(start_date, end_date)
+
+        message = formatters.format_streak(
+            streak_data['current'],
+            streak_data['longest_win'],
+            streak_data['longest_loss'],
+            period_label=period_label
         )
-        rows = await cursor.fetchall()
-        pnls = [r['total_pnl_usdt'] or 0 for r in rows]
-
-        # Calculate current streak
-        current = 0
-        if pnls:
-            is_win = pnls[0] > 0
-            for pnl in pnls:
-                if (pnl > 0) == is_win:
-                    current += 1 if is_win else -1
-                else:
-                    break
-
-        # Calculate longest streaks
-        longest_win = longest_loss = 0
-        streak = 0
-        prev_win = None
-
-        for pnl in reversed(pnls):
-            is_win = pnl > 0
-            if prev_win is None or is_win == prev_win:
-                streak += 1
-            else:
-                if prev_win:
-                    longest_win = max(longest_win, streak)
-                else:
-                    longest_loss = max(longest_loss, streak)
-                streak = 1
-            prev_win = is_win
-
-        if prev_win is not None:
-            if prev_win:
-                longest_win = max(longest_win, streak)
-            else:
-                longest_loss = max(longest_loss, streak)
-
-        message = formatters.format_streak(current, longest_win, longest_loss)
         await update.message.reply_text(message)
 
     except Exception as e:
@@ -456,38 +516,32 @@ async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 @channel_only
 async def cmd_drawdown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show drawdown information."""
-    try:
-        cursor = await db.connection.execute(
-            """
-            SELECT total_pnl_usdt, closed_at FROM trades
-            WHERE status = 'closed'
-            ORDER BY closed_at ASC
-            """
-        )
-        rows = await cursor.fetchall()
+    """Show drawdown information with optional date filtering.
 
-        if not rows:
-            await update.message.reply_text("📉 No closed trades yet")
+    Usage:
+        /drawdown - All-time drawdown
+        /drawdown today - Today's drawdown
+        /drawdown week - Last 7 days
+        /drawdown month - Last 30 days
+        /drawdown 2026-01-20 - Specific date
+    """
+    try:
+        # Parse date filter
+        start_date, end_date, period_label = parse_date_filter(context.args or [])
+
+        # Get drawdown info for the period
+        dd_data = await db.get_drawdown_for_period(start_date, end_date)
+
+        if dd_data['trade_count'] == 0:
+            await update.message.reply_text(f"📉 No closed trades for {period_label}")
             return
 
-        # Calculate equity curve and drawdown
-        equity = 0
-        peak = 0
-        max_dd = 0
-
-        for row in rows:
-            equity += row['total_pnl_usdt'] or 0
-            if equity > peak:
-                peak = equity
-            dd = peak - equity
-            if dd > max_dd:
-                max_dd = dd
-
-        current_dd = peak - equity
-        max_dd_percent = (max_dd / peak * 100) if peak > 0 else 0
-
-        message = formatters.format_drawdown(max_dd, max_dd_percent, current_dd)
+        message = formatters.format_drawdown(
+            dd_data['max_drawdown'],
+            dd_data['max_drawdown_percent'],
+            dd_data['current_drawdown'],
+            period_label=period_label
+        )
         await update.message.reply_text(message)
 
     except Exception as e:
@@ -499,13 +553,47 @@ async def cmd_drawdown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 @channel_only
 async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show recent trades."""
-    try:
-        limit = int(context.args[0]) if context.args else 10
-        limit = min(limit, 50)  # Cap at 50
+    """Show recent trades with optional date filtering.
 
-        trades = await db.get_recent_trades(limit)
-        message = formatters.format_trades_list(trades)
+    Usage:
+        /trades - Last 10 trades
+        /trades 20 - Last 20 trades
+        /trades today - Today's trades
+        /trades week - Last 7 days
+        /trades month - Last 30 days
+        /trades 2026-01-20 - Specific date
+    """
+    try:
+        args = context.args or []
+
+        # Check if first arg is a number (limit)
+        if args and args[0].isdigit():
+            limit = min(int(args[0]), 50)
+            trades = await db.get_recent_trades(limit)
+            message = formatters.format_trades_list(trades)
+        else:
+            # Parse date filter
+            start_date, end_date, period_label = parse_date_filter(args)
+
+            if start_date is None:
+                # All-time, use limit
+                trades = await db.get_recent_trades(10)
+                message = formatters.format_trades_list(trades)
+            else:
+                # Get trades for the period
+                trades = await db.get_trades_for_period(start_date, end_date, limit=50)
+                if not trades:
+                    await update.message.reply_text(f"📋 No trades for {period_label}")
+                    return
+                message = f"📋 Trades - {period_label}\n\n"
+                for trade in trades:
+                    pair = f"{trade['base']}/{trade['quote']}"
+                    exchange = trade['exchange'].capitalize()
+                    pnl = trade.get('total_pnl_usdt', 0) or 0
+                    emoji = "🟢" if pnl >= 0 else "🔴"
+                    date = trade.get('closed_at', '')[:10] if trade.get('closed_at') else 'Open'
+                    message += f"{emoji} {pair} ({exchange}) | {formatters.format_pnl(pnl)} | {date}\n"
+
         await update.message.reply_text(message)
 
     except Exception as e:
@@ -549,9 +637,23 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 @channel_only
 async def cmd_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show stats for specific exchange."""
+    """Show stats for specific exchange with optional date filtering.
+
+    Usage:
+        /exchange binance - All-time stats for Binance
+        /exchange binance today - Today's stats
+        /exchange binance week - Last 7 days
+        /exchange binance month - Last 30 days
+        /exchange binance 2026-01-20 - Specific date
+    """
     if not context.args:
-        await update.message.reply_text("Usage: /exchange <name> (e.g., /exchange binance)")
+        await update.message.reply_text(
+            "Usage: /exchange <name> [period]\n"
+            "Examples:\n"
+            "/exchange binance\n"
+            "/exchange binance today\n"
+            "/exchange binance week"
+        )
         return
 
     try:
@@ -562,18 +664,41 @@ async def cmd_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_text(f"❌ Unknown exchange: {context.args[0]}")
             return
 
-        cursor = await db.connection.execute(
-            """
-            SELECT COUNT(*) as trades,
-                   COALESCE(SUM(total_pnl_usdt), 0) as pnl
-            FROM trades
-            WHERE exchange = ? AND status = 'closed'
-            """,
-            (exchange,)
-        )
+        # Parse date filter from remaining args
+        start_date, end_date, period_label = parse_date_filter(context.args[1:] if len(context.args) > 1 else [])
+
+        # Build query based on date filter
+        if start_date is None:
+            # All-time
+            cursor = await db.connection.execute(
+                """
+                SELECT COUNT(*) as trades,
+                       COALESCE(SUM(total_pnl_usdt), 0) as pnl
+                FROM trades
+                WHERE exchange = ? AND status = 'closed'
+                """,
+                (exchange,)
+            )
+        else:
+            # Date filtered
+            cursor = await db.connection.execute(
+                """
+                SELECT COUNT(*) as trades,
+                       COALESCE(SUM(total_pnl_usdt), 0) as pnl
+                FROM trades
+                WHERE exchange = ? AND status = 'closed'
+                  AND DATE(closed_at) BETWEEN ? AND ?
+                """,
+                (exchange, start_date, end_date)
+            )
+
         row = await cursor.fetchone()
 
-        message = f"📊 {exchange.capitalize()} Stats\n\nTrades: {row['trades']}\nPnL: {formatters.format_pnl(row['pnl'])}"
+        pnl_emoji = "🟢" if row['pnl'] >= 0 else "🔴"
+        message = f"""📊 {exchange.capitalize()} Stats - {period_label}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Trades: {row['trades']}
+{pnl_emoji} PnL: {formatters.format_pnl(row['pnl'])}"""
         await update.message.reply_text(message)
 
     except Exception as e:
