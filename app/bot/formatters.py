@@ -116,13 +116,18 @@ def format_stats(stats: dict[str, Any]) -> str:
 def format_pnl_summary(realized: float, unrealized: float) -> str:
     """Format PnL summary message."""
     total = realized + unrealized
+    separator = "- - - - - - - - - - - - - - - - - - "
+
+    # Use 🟢 for positive, 🔻 for negative net PnL
+    pnl_emoji = "🟢" if total >= 0 else "🔻"
+
     lines = [
         "💰 PnL Summary",
-        "",
-        f"Realized: {format_pnl(realized)}",
-        f"Unrealized: {format_pnl(unrealized)}",
-        f"{'─' * 20}",
-        f"Total: {format_pnl(total)}",
+        separator,
+        f"Realized PnL: {format_pnl(realized)}",
+        f"Unrealized PnL: {format_pnl(unrealized)}",
+        separator,
+        f"{pnl_emoji} Net PnL: {format_pnl(total)}",
     ]
     return "\n".join(lines)
 

@@ -117,6 +117,15 @@ class TelegramService:
             # Return as-is if parsing fails
             return timestamp or "N/A"
 
+    def _format_quantity_with_commas(self, qty: float, symbol: str) -> str:
+        """Format quantity with thousand separators."""
+        if qty >= 1000:
+            return f"{qty:,.0f} {symbol}"
+        elif qty >= 1:
+            return f"{qty:,.1f} {symbol}"
+        else:
+            return f"{qty:.4f} {symbol}"
+
     def format_pyramid_entry_message(self, data: PyramidEntryData) -> str:
         """
         Format pyramid entry notification message.
@@ -129,24 +138,27 @@ class TelegramService:
         """
         exchange_time_str = self._parse_exchange_timestamp(data.exchange_timestamp)
         received_time_str = self._format_time(data.received_timestamp)
+        separator = "- - - - - - - - - - - - - - - - - - "
 
         lines = [
-            "📈 Pyramid Entry",
-            "",
-            f"Group: {data.group_id}",
-            f"Pyramid #{data.pyramid_index}",
-            "",
-            f"Exchange: {data.exchange.capitalize()}",
-            f"Pair: {data.base}/{data.quote}",
-            f"Timeframe: {data.timeframe}",
-            "",
-            f"Entry Price: {self._format_price(data.entry_price)}",
-            f"Size: {self._format_quantity(data.position_size)} {data.base}",
-            f"Capital: ${data.capital_usdt:.2f}",
-            "",
-            "Timestamps:",
-            f"├─ Exchange: {exchange_time_str}",
-            f"└─ Received: {received_time_str} ({settings.timezone})",
+            "📥 Trade Entry",
+            separator,
+            f"📌 Group: {data.group_id}",
+            f"🧱 Entry: #{data.pyramid_index}",
+            separator,
+            f"🏦 Exchange: {data.exchange.capitalize()}",
+            f"💱 Pair: {data.base}/{data.quote}",
+            f"⏱ Timeframe: {data.timeframe}",
+            separator,
+            "📥 Entry Details",
+            f"⏰ Entry Time: {exchange_time_str}",
+            f"💰 Entry Price: {self._format_price(data.entry_price)}",
+            f"📦 Size: {self._format_quantity_with_commas(data.position_size, data.base)}",
+            f"💵 Capital: ${data.capital_usdt:,.2f}",
+            separator,
+            "⏱ System Timestamps",
+            f"🕒 Exchange Time: {exchange_time_str}",
+            f"📍 Received: {received_time_str} ({settings.timezone})",
         ]
 
         return "\n".join(lines)
@@ -164,26 +176,24 @@ class TelegramService:
         # Parse timestamps
         exchange_time_str = self._parse_exchange_timestamp(data.exchange_timestamp)
         received_time_str = self._format_time(data.received_timestamp)
+        separator = "- - - - - - - - - - - - - - - - - - "
 
         lines = [
             "📊 Trade Closed",
+            separator,
+            f"📌 Group: {data.group_id}",
+            f"⏱ Timeframe: {data.timeframe}",
+            f"📅 Date: {self._format_date(data.received_timestamp)}",
+            separator,
+            f"🏦 Exchange: {data.exchange.capitalize()}",
+            f"💱 Pair: {data.base}/{data.quote}",
+            separator,
+            "📥 Entries:",
             "",
-            f"Group: {data.group_id}",
-            f"Timeframe: {data.timeframe}",
-            "",
-            f"Date: {self._format_date(data.received_timestamp)}",
-            "",
-            f"Exchange: {data.exchange.capitalize()}",
-            f"Pair: {data.base}/{data.quote}",
-            "",
-            "Entries:",
         ]
 
         # Add pyramid entries with their exchange timestamps
         for i, pyramid in enumerate(data.pyramids):
-            is_last = i == len(data.pyramids) - 1
-            prefix = "└─" if is_last else "├─"
-
             entry_time = pyramid.get("entry_time", "")
             if isinstance(entry_time, str):
                 try:
@@ -195,24 +205,32 @@ class TelegramService:
                 entry_time_str = self._format_time(entry_time)
 
             price_str = self._format_price(pyramid["entry_price"])
-            lines.append(
-                f"{prefix} P{pyramid['index']}: {price_str} @ {entry_time_str} "
-                f"({self._format_quantity(pyramid['size'])} {data.base})"
-            )
+            qty_str = self._format_quantity_with_commas(pyramid['size'], data.base)
+
+            lines.extend([
+                f"* Entry {pyramid['index']}",
+                f"💰 Price: {price_str}",
+                f"⏰ Time: {entry_time_str}",
+                f"📦 QTY: {qty_str}",
+                "",
+            ])
 
         # Add exit with dual timestamps
         lines.extend([
-            "",
-            f"Exit: {self._format_price(data.exit_price)}",
-            "Exit Timestamps:",
-            f"├─ Exchange: {exchange_time_str}",
-            f"└─ Received: {received_time_str} ({settings.timezone})",
-            "",
-            "Results:",
-            f"├─ Gross PnL: {self._format_pnl(data.gross_pnl)}",
-            f"├─ Fees: -${data.total_fees:.2f}",
-            f"└─ Net PnL: {self._format_pnl(data.net_pnl)} ({self._format_percent(data.net_pnl_percent)})",
+            separator,
+            "📤 Exit:",
+            f"💰 Exit Price: {self._format_price(data.exit_price)}",
+            f"⏰ Exchange Time: {exchange_time_str}",
+            f"📍 Confirmed: {received_time_str} ({settings.timezone})",
+            separator,
+            "📉 Results:",
+            f"💵 Gross PnL: {self._format_pnl(data.gross_pnl)}",
+            f"💸 Fees: -${data.total_fees:.2f}",
         ])
+
+        # Use 🟢 for positive, 🔻 for negative net PnL
+        pnl_emoji = "🟢" if data.net_pnl >= 0 else "🔻"
+        lines.append(f"{pnl_emoji} Net PnL: {self._format_pnl(data.net_pnl)} ({self._format_percent(data.net_pnl_percent)})")
 
         return "\n".join(lines)
 
