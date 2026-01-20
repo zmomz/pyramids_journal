@@ -685,3 +685,458 @@ class TestProcessExitEdgeCases:
         assert result.success is True
         assert len(data.pyramids) == 5
         assert data.net_pnl > 0  # Should be profitable
+
+
+class TestPnLCalculationAccuracy:
+    """Tests to verify PnL calculations are mathematically correct."""
+
+    @pytest.mark.asyncio
+    async def test_pnl_calculation_single_pyramid_profit(self):
+        """Test exact PnL calculation for a profitable single pyramid trade."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        # Setup: Entry at $50,000, position size 0.02 BTC, capital $1000
+        # Exit at $52,000 (4% profit)
+        # Expected gross PnL: (52000 - 50000) * 0.02 = $40
+        # Entry fee: 0.1% of $1000 = $1.00
+        # Exit fee: 0.1% of (52000 * 0.02) = 0.1% of $1040 = $1.04
+        # Expected net PnL: $40 - $1.00 - $1.04 = $37.96
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 52000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_pnl_test",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,  # Entry fee
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)  # 0.1%
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        # Verify gross PnL calculation
+        expected_gross = (52000.0 - 50000.0) * 0.02
+        assert abs(data.gross_pnl - expected_gross) < 0.01, f"Gross PnL: {data.gross_pnl} != {expected_gross}"
+
+        # Verify exit fee calculation (0.1% of exit value)
+        exit_value = 52000.0 * 0.02
+        expected_exit_fee = exit_value * 0.001
+        # Total fees = entry fee + exit fee
+        expected_total_fees = 1.0 + expected_exit_fee
+        assert abs(data.total_fees - expected_total_fees) < 0.01, f"Fees: {data.total_fees} != {expected_total_fees}"
+
+        # Verify net PnL
+        expected_net = expected_gross - expected_total_fees
+        assert abs(data.net_pnl - expected_net) < 0.01, f"Net PnL: {data.net_pnl} != {expected_net}"
+
+    @pytest.mark.asyncio
+    async def test_pnl_calculation_single_pyramid_loss(self):
+        """Test exact PnL calculation for a losing single pyramid trade."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        # Setup: Entry at $50,000, position size 0.02 BTC
+        # Exit at $48,000 (4% loss)
+        # Expected gross PnL: (48000 - 50000) * 0.02 = -$40
+        # Entry fee: $1.00
+        # Exit fee: 0.1% of (48000 * 0.02) = $0.96
+        # Expected net PnL: -$40 - $1.00 - $0.96 = -$41.96
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 48000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_loss_test",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        # Verify loss calculation
+        expected_gross = (48000.0 - 50000.0) * 0.02  # -40
+        assert abs(data.gross_pnl - expected_gross) < 0.01
+        assert data.gross_pnl < 0, "Gross PnL should be negative for a loss"
+        assert data.net_pnl < data.gross_pnl, "Net PnL should be worse than gross due to fees"
+
+    @pytest.mark.asyncio
+    async def test_pnl_calculation_multiple_pyramids_averaged(self):
+        """Test PnL calculation with multiple pyramid entries at different prices."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        # Setup: Two pyramids
+        # Pyramid 1: Entry $50,000 @ 0.02 BTC, fee $1.00
+        # Pyramid 2: Entry $49,000 @ 0.02 BTC, fee $0.98
+        # Exit at $51,000
+        # Pyramid 1 gross: (51000 - 50000) * 0.02 = $20
+        # Pyramid 2 gross: (51000 - 49000) * 0.02 = $40
+        # Total gross: $60
+        # Exit fees: 0.1% of (51000 * 0.04) = $2.04
+        # Total fees: $1.00 + $0.98 + $2.04 = $4.02
+        # Net PnL: $60 - $4.02 = $55.98
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 51000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_multi",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,
+                    "entry_time": "2026-01-20T10:00:00"
+                },
+                {
+                    "id": "pyr_2",
+                    "pyramid_index": 1,
+                    "entry_price": 49000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 980.0,
+                    "fee_usdt": 0.98,
+                    "entry_time": "2026-01-20T11:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        # Verify individual pyramid PnLs
+        assert len(data.pyramids) == 2
+
+        # Verify total gross PnL
+        pyr1_gross = (51000.0 - 50000.0) * 0.02  # $20
+        pyr2_gross = (51000.0 - 49000.0) * 0.02  # $40
+        expected_gross = pyr1_gross + pyr2_gross  # $60
+        assert abs(data.gross_pnl - expected_gross) < 0.01
+
+        # Verify net is less than gross due to fees
+        assert data.net_pnl < data.gross_pnl
+
+    @pytest.mark.asyncio
+    async def test_pnl_percent_calculation(self):
+        """Test that PnL percentage is calculated correctly relative to capital."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        # Setup: Entry at $50,000, capital $1000
+        # Exit at $55,000 (10% price increase)
+        # Gross PnL: (55000 - 50000) * 0.02 = $100 (10% of capital)
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 55000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_pct",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        # Gross should be 10% of capital
+        assert abs(data.gross_pnl - 100.0) < 0.01
+        # Net percent should be close to 10% but slightly less due to fees
+        assert data.net_pnl_percent > 9.0  # Should be around 9.8%
+        assert data.net_pnl_percent < 10.0  # Less than gross due to fees
+
+
+class TestBoundaryConditions:
+    """Tests for edge cases and boundary conditions."""
+
+    @pytest.mark.asyncio
+    async def test_very_small_position_size(self):
+        """Test handling of very small position sizes."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 50000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_small",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            # Very small position - 0.00001 BTC = $0.50 at $50k
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 49000.0,
+                    "position_size": 0.00001,
+                    "capital_usdt": 0.49,
+                    "fee_usdt": 0.0005,
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        # Should still calculate correctly even with tiny amounts
+        expected_gross = (50000.0 - 49000.0) * 0.00001  # $0.01
+        assert abs(data.gross_pnl - expected_gross) < 0.001
+
+    @pytest.mark.asyncio
+    async def test_breakeven_trade(self):
+        """Test handling of breakeven trade (exit = entry)."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 50000.0  # Same as entry
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_breakeven",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,  # Same as exit
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        # Gross PnL should be exactly 0
+        assert abs(data.gross_pnl) < 0.01
+        # Net PnL should be negative due to fees
+        assert data.net_pnl < 0, "Breakeven trade should be net negative due to fees"
+
+    @pytest.mark.asyncio
+    async def test_large_price_movement(self):
+        """Test handling of large price movements (e.g., 100% gain)."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 100000.0  # 100% gain from entry
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_moon",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        # 100% price gain means gross PnL = capital
+        expected_gross = (100000.0 - 50000.0) * 0.02  # $1000
+        assert abs(data.gross_pnl - expected_gross) < 0.01
+        assert data.gross_pnl == 1000.0  # Should equal original capital
+
+    @pytest.mark.asyncio
+    async def test_zero_fee_rate(self):
+        """Test handling when fee rate is zero."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 52000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_nofee",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 0.0,  # No entry fee
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.0)  # No fee
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        # With no fees, net should equal gross
+        assert abs(data.gross_pnl - data.net_pnl) < 0.01

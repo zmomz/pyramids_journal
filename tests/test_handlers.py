@@ -1479,3 +1479,664 @@ class TestCmdStatusLongMessage:
 
             # Should have called reply_text multiple times for chunked message
             assert mock_update.message.reply_text.call_count >= 1
+
+
+class TestGeneratePeriodReportWithData:
+    """Tests for generate_period_report with actual trade data."""
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_with_trades(self, populated_db):
+        """Test generating period report with actual trade data."""
+        from app.bot.handlers import generate_period_report
+
+        with patch("app.bot.handlers.db", populated_db):
+            report = await generate_period_report(30)
+
+            # Should have trades from the populated_db fixture
+            assert report.total_trades >= 0  # Could be 0 if trades are older than 30 days
+            assert report.date == "Last 30 days"
+            assert isinstance(report.total_pnl_usdt, (int, float))
+            assert isinstance(report.by_exchange, dict)
+            assert isinstance(report.by_timeframe, dict)
+            assert isinstance(report.by_pair, dict)
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_aggregates_by_exchange(self):
+        """Test that report correctly aggregates PnL by exchange."""
+        from app.bot.handlers import generate_period_report
+        from datetime import datetime, UTC, timedelta
+
+        # Create trades with different exchanges
+        trades = [
+            {
+                "id": "trade_1",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 100.0,
+            },
+            {
+                "id": "trade_2",
+                "exchange": "binance",
+                "base": "ETH",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 50.0,
+            },
+            {
+                "id": "trade_3",
+                "exchange": "bybit",
+                "base": "SOL",
+                "quote": "USDT",
+                "timeframe": "4h",
+                "total_pnl_usdt": -25.0,
+            },
+        ]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {"capital_usdt": 1000.0}
+            ])
+
+            report = await generate_period_report(7)
+
+            # Verify exchange aggregation
+            assert "binance" in report.by_exchange
+            assert "bybit" in report.by_exchange
+            assert report.by_exchange["binance"]["pnl"] == 150.0  # 100 + 50
+            assert report.by_exchange["binance"]["trades"] == 2
+            assert report.by_exchange["bybit"]["pnl"] == -25.0
+            assert report.by_exchange["bybit"]["trades"] == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_aggregates_by_timeframe(self):
+        """Test that report correctly aggregates PnL by timeframe."""
+        from app.bot.handlers import generate_period_report
+
+        trades = [
+            {
+                "id": "trade_1",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 100.0,
+            },
+            {
+                "id": "trade_2",
+                "exchange": "binance",
+                "base": "ETH",
+                "quote": "USDT",
+                "timeframe": "4h",
+                "total_pnl_usdt": 200.0,
+            },
+            {
+                "id": "trade_3",
+                "exchange": "binance",
+                "base": "SOL",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 50.0,
+            },
+        ]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {"capital_usdt": 1000.0}
+            ])
+
+            report = await generate_period_report(7)
+
+            # Verify timeframe aggregation
+            assert "1h" in report.by_timeframe
+            assert "4h" in report.by_timeframe
+            assert report.by_timeframe["1h"]["pnl"] == 150.0  # 100 + 50
+            assert report.by_timeframe["1h"]["trades"] == 2
+            assert report.by_timeframe["4h"]["pnl"] == 200.0
+            assert report.by_timeframe["4h"]["trades"] == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_aggregates_by_pair(self):
+        """Test that report correctly aggregates PnL by trading pair."""
+        from app.bot.handlers import generate_period_report
+
+        trades = [
+            {
+                "id": "trade_1",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 100.0,
+            },
+            {
+                "id": "trade_2",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": "4h",
+                "total_pnl_usdt": 50.0,
+            },
+            {
+                "id": "trade_3",
+                "exchange": "binance",
+                "base": "ETH",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": -30.0,
+            },
+        ]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {"capital_usdt": 1000.0}
+            ])
+
+            report = await generate_period_report(7)
+
+            # Verify pair aggregation
+            assert "BTC/USDT" in report.by_pair
+            assert "ETH/USDT" in report.by_pair
+            assert report.by_pair["BTC/USDT"] == 150.0  # 100 + 50
+            assert report.by_pair["ETH/USDT"] == -30.0
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_handles_none_pnl(self):
+        """Test that report handles None PnL values gracefully."""
+        from app.bot.handlers import generate_period_report
+
+        trades = [
+            {
+                "id": "trade_1",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": None,  # None value
+            },
+            {
+                "id": "trade_2",
+                "exchange": "binance",
+                "base": "ETH",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 50.0,
+            },
+        ]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
+
+            report = await generate_period_report(7)
+
+            # Should handle None as 0
+            assert report.total_pnl_usdt == 50.0  # Only the non-None value
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_handles_missing_timeframe(self):
+        """Test that report handles missing timeframe gracefully."""
+        from app.bot.handlers import generate_period_report
+
+        trades = [
+            {
+                "id": "trade_1",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": None,  # Missing timeframe
+                "total_pnl_usdt": 100.0,
+            },
+        ]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
+
+            report = await generate_period_report(7)
+
+            # Should use 'unknown' for missing timeframe
+            assert "unknown" in report.by_timeframe
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_pnl_percent_calculation(self):
+        """Test that PnL percentage is calculated correctly."""
+        from app.bot.handlers import generate_period_report
+
+        trades = [
+            {
+                "id": "trade_1",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 100.0,
+            },
+        ]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            # Return pyramid with capital
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {"capital_usdt": 1000.0}
+            ])
+
+            report = await generate_period_report(7)
+
+            # PnL percent should be 100 / 1000 * 100 = 10%
+            assert abs(report.total_pnl_percent - 10.0) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_zero_capital(self):
+        """Test that report handles zero capital gracefully."""
+        from app.bot.handlers import generate_period_report
+
+        trades = [
+            {
+                "id": "trade_1",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "timeframe": "1h",
+                "total_pnl_usdt": 100.0,
+            },
+        ]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            # No pyramids = zero capital
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
+
+            report = await generate_period_report(7)
+
+            # PnL percent should be 0 when capital is 0
+            assert report.total_pnl_percent == 0
+
+
+class TestInputValidationEdgeCases:
+    """Tests for input validation edge cases across various commands."""
+
+    @pytest.mark.asyncio
+    async def test_setfee_very_large_rate(self, mock_update, mock_context):
+        """Test /setfee with unreasonably large rate."""
+        from app.bot.handlers import cmd_setfee
+
+        mock_context.args = ["binance", "100"]  # 100% fee is unreasonable
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_setfee(mock_update, mock_context)
+
+            # Should still work (no max limit enforced in handler)
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            # Either updates or shows error
+            assert "Updated" in call_args or "Invalid" in call_args
+
+    @pytest.mark.asyncio
+    async def test_setfee_zero_rate(self, mock_update, mock_context):
+        """Test /setfee with zero rate (valid for some exchanges)."""
+        from app.bot.handlers import cmd_setfee
+
+        mock_context.args = ["binance", "0"]
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_setfee(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Updated" in call_args
+
+    @pytest.mark.asyncio
+    async def test_set_capital_zero_value(self, mock_update, mock_context):
+        """Test /set_capital with zero capital value."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = ["binance", "BTC/USDT", "1h", "0", "0"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            # Should reject zero capital
+            assert "must be positive" in call_args
+
+    @pytest.mark.asyncio
+    async def test_set_capital_very_large_index(self, mock_update, mock_context):
+        """Test /set_capital with very large pyramid index."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = ["binance", "BTC/USDT", "1h", "999", "1000"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.set_pyramid_capital = AsyncMock(return_value="binance:BTC:USDT:1h:999")
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            # Should work - no max index limit
+            assert "Capital set" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reporttime_edge_times(self, mock_update, mock_context):
+        """Test /reporttime with edge case times."""
+        from app.bot.handlers import cmd_reporttime
+
+        # Test midnight
+        mock_context.args = ["00:00"]
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_reporttime(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "00:00" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reporttime_end_of_day(self, mock_update, mock_context):
+        """Test /reporttime with 23:59."""
+        from app.bot.handlers import cmd_reporttime
+
+        mock_context.args = ["23:59"]
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_reporttime(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "23:59" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reporttime_invalid_hour(self, mock_update, mock_context):
+        """Test /reporttime with invalid hour (24:00)."""
+        from app.bot.handlers import cmd_reporttime
+
+        mock_context.args = ["24:00"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_reporttime(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Invalid" in call_args
+
+    @pytest.mark.asyncio
+    async def test_trades_negative_limit(self, mock_update, mock_context, test_db):
+        """Test /trades with negative limit."""
+        from app.bot.handlers import cmd_trades
+
+        mock_context.args = ["-5"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db", test_db):
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_trades(mock_update, mock_context)
+
+            # Should handle gracefully - either show error or treat as invalid
+            mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_trades_zero_limit(self, mock_update, mock_context, test_db):
+        """Test /trades with zero limit."""
+        from app.bot.handlers import cmd_trades
+
+        mock_context.args = ["0"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db", test_db):
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_trades(mock_update, mock_context)
+
+            # Should handle gracefully
+            mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_history_special_characters_in_pair(self, mock_update, mock_context, test_db):
+        """Test /history with special characters in pair name."""
+        from app.bot.handlers import cmd_history
+
+        mock_context.args = ["BTC<script>/USDT"]  # Attempt XSS in pair name
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db", test_db):
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_history(mock_update, mock_context)
+
+            # Should handle safely
+            mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_ignore_sql_injection_attempt(self, mock_update, mock_context):
+        """Test /ignore with SQL injection attempt in pair name."""
+        from app.bot.handlers import cmd_ignore
+
+        mock_context.args = ["'; DROP TABLE trades; --"]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_ignore(mock_update, mock_context)
+
+            # Should handle safely - the pair is stored as-is
+            # SQLite parameterized queries prevent injection
+            mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_signals_channel_very_large_id(self, mock_update, mock_context):
+        """Test /signals_channel with very large channel ID."""
+        from app.bot.handlers import cmd_signals_channel
+
+        mock_context.args = ["-9999999999999999999"]  # Very large negative number
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_signals_channel(mock_update, mock_context)
+
+            # Should handle - either accept or reject based on validation
+            mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_exchange_command_case_handling(self, mock_update, mock_context, populated_db):
+        """Test /exchange handles different case variations."""
+        from app.bot.handlers import cmd_exchange
+
+        # Test uppercase
+        mock_context.args = ["BINANCE"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db", populated_db):
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_exchange(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            # Should normalize exchange name
+            assert "binance" in call_args.lower() or "BINANCE" in call_args
+
+    @pytest.mark.asyncio
+    async def test_report_future_date(self, mock_update, mock_context):
+        """Test /report with future date."""
+        from app.bot.handlers import cmd_report
+        from app.services.report_service import ReportService
+        from app.models import DailyReportData
+
+        mock_context.args = ["2099-12-31"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.report_service") as mock_report_service, \
+             patch("app.bot.handlers.telegram_service") as mock_telegram, \
+             patch("app.bot.handlers.settings") as mock_settings:
+            mock_bot.is_valid_chat.return_value = True
+            mock_settings.equity_curve_enabled = False
+
+            # Return empty report for future date
+            mock_report_service.generate_daily_report = AsyncMock(return_value=DailyReportData(
+                date="2099-12-31",
+                total_trades=0,
+                total_pyramids=0,
+                total_pnl_usdt=0.0,
+                total_pnl_percent=0.0,
+                by_exchange={},
+                by_timeframe={},
+                by_pair={},
+            ))
+            mock_telegram.format_daily_report_message = MagicMock(return_value="Report for 2099-12-31")
+
+            await cmd_report(mock_update, mock_context)
+
+            # Should handle future date gracefully
+            mock_update.message.reply_text.assert_called_once()
+
+
+class TestDateFilterBoundaries:
+    """Tests for date filter boundary conditions."""
+
+    def test_date_format_with_leading_zeros(self):
+        """Test date filter handles dates with leading zeros correctly."""
+        from app.bot.handlers import parse_date_filter
+
+        start, end, label = parse_date_filter(["2026-01-05"])
+
+        assert start == "2026-01-05"
+        assert end == "2026-01-05"
+
+    def test_date_format_without_leading_zeros(self):
+        """Test date filter handles dates without leading zeros."""
+        from app.bot.handlers import parse_date_filter
+
+        # This should be treated as invalid since YYYY-MM-DD requires MM and DD
+        start, end, label = parse_date_filter(["2026-1-5"])
+
+        # Should fall back to all-time since format doesn't match
+        assert start is None
+        assert end is None
+
+    def test_date_filter_leap_year(self):
+        """Test date filter handles leap year dates."""
+        from app.bot.handlers import parse_date_filter
+
+        # February 29 in leap year 2024
+        start, end, label = parse_date_filter(["2024-02-29"])
+
+        assert start == "2024-02-29"
+        assert end == "2024-02-29"
+
+    def test_date_filter_non_leap_year_feb29(self):
+        """Test date filter rejects Feb 29 in non-leap year."""
+        from app.bot.handlers import parse_date_filter
+
+        # February 29 in non-leap year should be invalid
+        start, end, label = parse_date_filter(["2023-02-29"])
+
+        # Should fall back to all-time since date is invalid
+        assert start is None
+        assert end is None
+
+    def test_date_filter_year_boundaries(self):
+        """Test date filter handles year boundaries."""
+        from app.bot.handlers import parse_date_filter
+
+        # End of year
+        start, end, label = parse_date_filter(["2026-12-31"])
+        assert start == "2026-12-31"
+
+        # Start of year
+        start, end, label = parse_date_filter(["2026-01-01"])
+        assert start == "2026-01-01"

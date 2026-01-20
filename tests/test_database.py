@@ -1206,3 +1206,395 @@ class TestResetMethods:
 
         cursor = await populated_db.connection.execute("SELECT COUNT(*) FROM symbol_rules")
         assert (await cursor.fetchone())[0] == 0
+
+
+class TestFullTradeWorkflow:
+    """Integration tests for complete trade workflows using real database."""
+
+    @pytest.mark.asyncio
+    async def test_complete_trade_lifecycle(self, test_db):
+        """Test complete trade from creation to closing with real database."""
+        # 1. Create a trade with group
+        trade_id = "integration_trade_1"
+        group_id = "BTC_Binance_1h_001"
+
+        await test_db.create_trade_with_group(
+            trade_id=trade_id,
+            group_id=group_id,
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            timeframe="1h",
+            position_side="long"
+        )
+
+        # Verify trade is open
+        trade = await test_db.get_open_trade_by_group("binance", "BTC", "USDT", "1h")
+        assert trade is not None
+        assert trade["id"] == trade_id
+        assert trade["status"] == "open"
+
+        # 2. Add first pyramid
+        await test_db.add_pyramid(
+            pyramid_id="pyr_int_1",
+            trade_id=trade_id,
+            pyramid_index=0,
+            entry_price=50000.0,
+            position_size=0.02,
+            capital_usdt=1000.0,
+            fee_rate=0.001,
+            fee_usdt=1.0,
+        )
+
+        # Verify pyramid was added
+        pyramids = await test_db.get_pyramids_for_trade(trade_id)
+        assert len(pyramids) == 1
+        assert pyramids[0]["entry_price"] == 50000.0
+
+        # 3. Add second pyramid
+        await test_db.add_pyramid(
+            pyramid_id="pyr_int_2",
+            trade_id=trade_id,
+            pyramid_index=1,
+            entry_price=49000.0,
+            position_size=0.02,
+            capital_usdt=980.0,
+            fee_rate=0.001,
+            fee_usdt=0.98,
+        )
+
+        pyramids = await test_db.get_pyramids_for_trade(trade_id)
+        assert len(pyramids) == 2
+
+        # 4. Update pyramid PnLs
+        await test_db.update_pyramid_pnl("pyr_int_1", 20.0, 2.0)
+        await test_db.update_pyramid_pnl("pyr_int_2", 40.0, 4.08)
+
+        # Verify PnL updates
+        cursor = await test_db.connection.execute(
+            "SELECT pnl_usdt FROM pyramids WHERE id = ?", ("pyr_int_1",)
+        )
+        row = await cursor.fetchone()
+        assert row["pnl_usdt"] == 20.0
+
+        # 5. Add exit
+        await test_db.add_exit(
+            exit_id="exit_int_1",
+            trade_id=trade_id,
+            exit_price=51000.0,
+            fee_usdt=2.04,
+        )
+
+        # 6. Close trade
+        await test_db.close_trade(trade_id, total_pnl_usdt=56.98, total_pnl_percent=2.88)
+
+        # Verify trade is closed
+        trade = await test_db.get_open_trade_by_group("binance", "BTC", "USDT", "1h")
+        assert trade is None  # No open trade now
+
+        cursor = await test_db.connection.execute(
+            "SELECT status, total_pnl_usdt FROM trades WHERE id = ?", (trade_id,)
+        )
+        closed_trade = await cursor.fetchone()
+        assert closed_trade["status"] == "closed"
+        assert abs(closed_trade["total_pnl_usdt"] - 56.98) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_multiple_concurrent_trades(self, test_db):
+        """Test handling multiple trades for different pairs simultaneously."""
+        # Create trades for different pairs
+        pairs = [
+            ("BTC", "binance", "1h"),
+            ("ETH", "binance", "1h"),
+            ("BTC", "bybit", "4h"),
+        ]
+
+        for base, exchange, timeframe in pairs:
+            seq = await test_db.get_next_group_sequence(base, exchange, timeframe)
+            group_id = f"{base}_{exchange.title()}_{timeframe}_{seq:03d}"
+
+            await test_db.create_trade_with_group(
+                trade_id=f"trade_{base}_{exchange}_{timeframe}",
+                group_id=group_id,
+                exchange=exchange,
+                base=base,
+                quote="USDT",
+                timeframe=timeframe,
+            )
+
+        # Verify each trade is retrievable
+        btc_binance = await test_db.get_open_trade_by_group("binance", "BTC", "USDT", "1h")
+        eth_binance = await test_db.get_open_trade_by_group("binance", "ETH", "USDT", "1h")
+        btc_bybit = await test_db.get_open_trade_by_group("bybit", "BTC", "USDT", "4h")
+
+        assert btc_binance is not None
+        assert eth_binance is not None
+        assert btc_bybit is not None
+
+        # Verify they are distinct
+        assert btc_binance["id"] != eth_binance["id"]
+        assert btc_binance["id"] != btc_bybit["id"]
+
+    @pytest.mark.asyncio
+    async def test_statistics_calculation_accuracy(self, test_db):
+        """Test that statistics are calculated correctly from real data."""
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Create and close trades with known PnLs
+        trades_data = [
+            ("stat_trade_1", 100.0, 10.0),   # Win
+            ("stat_trade_2", -50.0, -5.0),   # Loss
+            ("stat_trade_3", 75.0, 7.5),     # Win
+            ("stat_trade_4", -25.0, -2.5),   # Loss
+            ("stat_trade_5", 200.0, 20.0),   # Win
+        ]
+
+        for trade_id, pnl, pct in trades_data:
+            await test_db.connection.execute(
+                """
+                INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                                   total_pnl_usdt, total_pnl_percent, created_at, closed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (trade_id, "binance", "BTC", "USDT", "closed", "1h",
+                 pnl, pct, f"{today} 09:00:00", f"{today} 10:00:00")
+            )
+        await test_db.connection.commit()
+
+        # Calculate statistics
+        stats = await test_db.get_statistics_for_period(today, today)
+
+        # Verify counts
+        assert stats["total_trades"] == 5
+
+        # Verify PnL sum: 100 - 50 + 75 - 25 + 200 = 300
+        assert abs(stats["total_pnl"] - 300.0) < 0.01
+
+        # Verify win rate: 3 wins out of 5 = 60%
+        assert abs(stats["win_rate"] - 60.0) < 0.01
+
+        # Verify best/worst trades
+        assert stats["best_trade"] == 200.0
+        assert stats["worst_trade"] == -50.0
+
+        # Verify average win: (100 + 75 + 200) / 3 = 125
+        assert abs(stats["avg_win"] - 125.0) < 0.01
+
+        # Verify average loss: (-50 + -25) / 2 = -37.5
+        assert abs(stats["avg_loss"] - (-37.5)) < 0.01
+
+        # Verify profit factor: 375 / 75 = 5.0
+        total_wins = 100 + 75 + 200  # 375
+        total_losses = 50 + 25  # 75
+        expected_pf = total_wins / total_losses
+        assert abs(stats["profit_factor"] - expected_pf) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_period_filtering_accuracy(self, test_db):
+        """Test that date filtering works correctly for all period methods."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+        # Create trades for different days
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("today_trade", "binance", "BTC", "USDT", "closed", "1h",
+             100.0, f"{today} 09:00:00", f"{today} 10:00:00")
+        )
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("yesterday_trade", "binance", "ETH", "USDT", "closed", "1h",
+             50.0, f"{yesterday} 09:00:00", f"{yesterday} 10:00:00")
+        )
+        await test_db.connection.commit()
+
+        # Test today only
+        pnl_today, count_today = await test_db.get_realized_pnl_for_period(today, today)
+        assert count_today == 1
+        assert abs(pnl_today - 100.0) < 0.01
+
+        # Test yesterday only
+        pnl_yesterday, count_yesterday = await test_db.get_realized_pnl_for_period(yesterday, yesterday)
+        assert count_yesterday == 1
+        assert abs(pnl_yesterday - 50.0) < 0.01
+
+        # Test both days
+        pnl_both, count_both = await test_db.get_realized_pnl_for_period(yesterday, today)
+        assert count_both == 2
+        assert abs(pnl_both - 150.0) < 0.01
+
+    @pytest.mark.asyncio
+    async def test_pyramid_ordering(self, test_db):
+        """Test that pyramids are returned in correct order by index."""
+        trade_id = "order_test_trade"
+        await test_db.create_trade(trade_id, "binance", "BTC", "USDT")
+
+        # Add pyramids in random order
+        for idx in [2, 0, 4, 1, 3]:
+            await test_db.add_pyramid(
+                pyramid_id=f"pyr_order_{idx}",
+                trade_id=trade_id,
+                pyramid_index=idx,
+                entry_price=50000.0 - (idx * 100),
+                position_size=0.02,
+                capital_usdt=1000.0,
+                fee_rate=0.001,
+                fee_usdt=1.0,
+            )
+
+        # Retrieve and verify order
+        pyramids = await test_db.get_pyramids_for_trade(trade_id)
+        assert len(pyramids) == 5
+        for i, p in enumerate(pyramids):
+            assert p["pyramid_index"] == i, f"Pyramid at position {i} has index {p['pyramid_index']}"
+
+    @pytest.mark.asyncio
+    async def test_null_pnl_handling(self, test_db):
+        """Test that NULL PnL values are handled correctly in statistics."""
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Create trades - some with NULL PnL (open trades)
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("null_pnl_1", "binance", "BTC", "USDT", "closed", "1h",
+             100.0, f"{today} 09:00:00", f"{today} 10:00:00")
+        )
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("null_pnl_2", "binance", "ETH", "USDT", "open", "1h",
+             None, f"{today} 11:00:00", None)  # Open trade with NULL PnL
+        )
+        await test_db.connection.commit()
+
+        # Statistics should only include closed trades
+        stats = await test_db.get_statistics_for_period(today, today)
+        assert stats["total_trades"] == 1  # Only the closed trade
+        assert abs(stats["total_pnl"] - 100.0) < 0.01
+
+
+class TestDataIntegrity:
+    """Tests for data integrity constraints and edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_pyramid_handling(self, test_db):
+        """Test that duplicate pyramid IDs are handled (should fail or update)."""
+        trade_id = "dup_pyr_trade"
+        await test_db.create_trade(trade_id, "binance", "BTC", "USDT")
+
+        # Add first pyramid
+        await test_db.add_pyramid(
+            pyramid_id="dup_pyr_1",
+            trade_id=trade_id,
+            pyramid_index=0,
+            entry_price=50000.0,
+            position_size=0.02,
+            capital_usdt=1000.0,
+            fee_rate=0.001,
+            fee_usdt=1.0,
+        )
+
+        # Try to add duplicate - should raise or handle gracefully
+        try:
+            await test_db.add_pyramid(
+                pyramid_id="dup_pyr_1",  # Same ID
+                trade_id=trade_id,
+                pyramid_index=1,
+                entry_price=49000.0,
+                position_size=0.02,
+                capital_usdt=980.0,
+                fee_rate=0.001,
+                fee_usdt=0.98,
+            )
+            # If no error, verify only one exists
+            pyramids = await test_db.get_pyramids_for_trade(trade_id)
+            assert len(pyramids) <= 1
+        except Exception:
+            # Expected - duplicate ID should fail
+            pass
+
+    @pytest.mark.asyncio
+    async def test_setting_special_characters(self, test_db):
+        """Test that settings can handle special characters in values."""
+        special_values = [
+            "Asia/Kolkata",
+            "America/New_York",
+            "BTC/USDT,ETH/USDT,SOL/USDT",
+            "12:00",
+            "-1001234567890",
+        ]
+
+        for i, value in enumerate(special_values):
+            key = f"special_test_{i}"
+            await test_db.set_setting(key, value)
+            retrieved = await test_db.get_setting(key)
+            assert retrieved == value, f"Failed for value: {value}"
+
+    @pytest.mark.asyncio
+    async def test_ignored_pairs_edge_cases(self, test_db):
+        """Test ignored pairs with various edge cases."""
+        # Empty string
+        await test_db.set_setting("ignored_pairs", "")
+        assert await test_db.is_pair_ignored("BTC", "USDT") is False
+
+        # Single pair
+        await test_db.set_setting("ignored_pairs", "BTC/USDT")
+        assert await test_db.is_pair_ignored("BTC", "USDT") is True
+        assert await test_db.is_pair_ignored("ETH", "USDT") is False
+
+        # Multiple pairs with trailing comma
+        await test_db.set_setting("ignored_pairs", "BTC/USDT,ETH/USDT,")
+        assert await test_db.is_pair_ignored("BTC", "USDT") is True
+        assert await test_db.is_pair_ignored("ETH", "USDT") is True
+
+    @pytest.mark.asyncio
+    async def test_exchange_stats_accuracy(self, test_db):
+        """Test exchange breakdown statistics accuracy."""
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Create trades on different exchanges
+        exchanges = [
+            ("binance", 100.0),
+            ("binance", -30.0),
+            ("bybit", 50.0),
+            ("bybit", 75.0),
+        ]
+
+        for i, (exchange, pnl) in enumerate(exchanges):
+            await test_db.connection.execute(
+                """
+                INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                                   total_pnl_usdt, created_at, closed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (f"ex_stat_{i}", exchange, "BTC", "USDT", "closed", "1h",
+                 pnl, f"{today} {9+i}:00:00", f"{today} {10+i}:00:00")
+            )
+        await test_db.connection.commit()
+
+        stats = await test_db.get_exchange_stats_for_period(today, today)
+
+        # Binance: 100 - 30 = 70, 2 trades
+        assert "binance" in stats
+        assert abs(stats["binance"]["pnl"] - 70.0) < 0.01
+        assert stats["binance"]["trades"] == 2
+
+        # Bybit: 50 + 75 = 125, 2 trades
+        assert "bybit" in stats
+        assert abs(stats["bybit"]["pnl"] - 125.0) < 0.01
+        assert stats["bybit"]["trades"] == 2
