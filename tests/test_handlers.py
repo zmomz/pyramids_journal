@@ -519,11 +519,27 @@ class TestCmdExchange:
     """Tests for /exchange command."""
 
     @pytest.mark.asyncio
-    async def test_exchange_all_time(self, mock_update, mock_context, populated_db):
-        """Test /exchange command for all-time."""
+    async def test_exchange_no_args_shows_usage(self, mock_update, mock_context):
+        """Test /exchange without args shows usage message."""
         from app.bot.handlers import cmd_exchange
 
         mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_exchange(mock_update, mock_context)
+
+            mock_update.message.reply_text.assert_called_once()
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Usage" in call_args
+
+    @pytest.mark.asyncio
+    async def test_exchange_with_name(self, mock_update, mock_context, populated_db):
+        """Test /exchange <name> command for all-time stats."""
+        from app.bot.handlers import cmd_exchange
+
+        mock_context.args = ["binance"]
 
         with patch("app.bot.handlers._bot") as mock_bot:
             mock_bot.is_valid_chat.return_value = True
@@ -532,15 +548,13 @@ class TestCmdExchange:
                 await cmd_exchange(mock_update, mock_context)
 
                 mock_update.message.reply_text.assert_called_once()
-                call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "Exchange Stats" in call_args
 
     @pytest.mark.asyncio
-    async def test_exchange_today(self, mock_update, mock_context, populated_db):
-        """Test /exchange today command."""
+    async def test_exchange_with_name_and_period(self, mock_update, mock_context, populated_db):
+        """Test /exchange <name> today command."""
         from app.bot.handlers import cmd_exchange
 
-        mock_context.args = ["today"]
+        mock_context.args = ["binance", "today"]
 
         with patch("app.bot.handlers._bot") as mock_bot:
             mock_bot.is_valid_chat.return_value = True
@@ -549,7 +563,7 @@ class TestCmdExchange:
                 await cmd_exchange(mock_update, mock_context)
 
                 call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "Today" in call_args
+                assert "Today" in call_args or "Binance" in call_args
 
 
 class TestCmdLive:

@@ -338,6 +338,7 @@ class TestFormatTradeClosedMessage:
             mock_settings.timezone = "UTC"
 
             data = TradeClosedData(
+                trade_id="trade_001",
                 group_id="BTC_Binance_1h_001",
                 timeframe="1h",
                 exchange="binance",
@@ -352,6 +353,7 @@ class TestFormatTradeClosedMessage:
                     }
                 ],
                 exit_price=51000.0,
+                exit_time=datetime.utcnow(),
                 exchange_timestamp="2026-01-20T12:00:00Z",
                 received_timestamp=datetime.utcnow(),
                 gross_pnl=20.0,
@@ -380,6 +382,7 @@ class TestFormatTradeClosedMessage:
             mock_settings.timezone = "UTC"
 
             data = TradeClosedData(
+                trade_id="trade_002",
                 group_id="BTC_Binance_1h_001",
                 timeframe="1h",
                 exchange="binance",
@@ -394,6 +397,7 @@ class TestFormatTradeClosedMessage:
                     }
                 ],
                 exit_price=49000.0,
+                exit_time=datetime.utcnow(),
                 exchange_timestamp="2026-01-20T12:00:00Z",
                 received_timestamp=datetime.utcnow(),
                 gross_pnl=-20.0,
@@ -418,6 +422,7 @@ class TestFormatTradeClosedMessage:
             mock_settings.timezone = "UTC"
 
             data = TradeClosedData(
+                trade_id="trade_003",
                 group_id="BTC_Binance_1h_001",
                 timeframe="1h",
                 exchange="binance",
@@ -438,6 +443,7 @@ class TestFormatTradeClosedMessage:
                     }
                 ],
                 exit_price=51000.0,
+                exit_time=datetime.utcnow(),
                 exchange_timestamp="2026-01-20T12:00:00Z",
                 received_timestamp=datetime.utcnow(),
                 gross_pnl=25.0,
@@ -561,7 +567,7 @@ class TestFormatDailyReportMessage:
     def test_format_daily_report_with_trades(self):
         """Test formatting daily report with trade details."""
         from app.services.telegram_service import TelegramService
-        from app.models import DailyReportData, TradeReportEntry
+        from app.models import DailyReportData, TradeHistoryItem
 
         service = TelegramService()
 
@@ -572,7 +578,7 @@ class TestFormatDailyReportMessage:
             total_pnl_usdt=100.0,
             total_pnl_percent=5.0,
             trades=[
-                TradeReportEntry(
+                TradeHistoryItem(
                     group_id="BTC_Binance_1h_001",
                     exchange="binance",
                     pair="BTC/USDT",

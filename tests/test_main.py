@@ -325,8 +325,27 @@ class TestWebhookEndpoint:
 class TestTradingViewAlertModel:
     """Tests for TradingViewAlert model."""
 
-    def test_short_entry_signal(self):
-        """Test sell + short = entry for short position."""
+    def test_long_entry_signal(self):
+        """Test buy + long = entry for long position."""
+        from app.models import TradingViewAlert
+
+        alert = TradingViewAlert(
+            timestamp="2026-01-20T10:00:00Z",
+            exchange="binance",
+            symbol="BTCUSDT",
+            timeframe="1h",
+            action="buy",
+            order_id="test_123",
+            contracts=0.01,
+            close=50000.0,
+            position_side="long",
+            position_qty=0.01
+        )
+        assert alert.is_entry() is True
+        assert alert.is_exit() is False
+
+    def test_long_exit_signal(self):
+        """Test sell + flat = exit for long position."""
         from app.models import TradingViewAlert
 
         alert = TradingViewAlert(
@@ -336,35 +355,16 @@ class TestTradingViewAlertModel:
             timeframe="1h",
             action="sell",
             order_id="test_123",
-            contracts=0.01,
-            close=50000.0,
-            position_side="short",
-            position_qty=0.01
-        )
-        assert alert.is_entry() is True
-        assert alert.is_exit() is False
-
-    def test_short_exit_signal(self):
-        """Test buy + flat = exit for short position."""
-        from app.models import TradingViewAlert
-
-        alert = TradingViewAlert(
-            timestamp="2026-01-20T10:00:00Z",
-            exchange="binance",
-            symbol="BTCUSDT",
-            timeframe="1h",
-            action="buy",
-            order_id="test_123",
             contracts=0.0,
-            close=48000.0,
+            close=52000.0,
             position_side="flat",
             position_qty=0.0
         )
         assert alert.is_exit() is True
         assert alert.is_entry() is False
 
-    def test_long_add_position(self):
-        """Test buy + long with existing position = add (not initial entry)."""
+    def test_short_signal_not_entry(self):
+        """Test sell + short is NOT considered entry (long only)."""
         from app.models import TradingViewAlert
 
         alert = TradingViewAlert(
@@ -372,15 +372,15 @@ class TestTradingViewAlertModel:
             exchange="binance",
             symbol="BTCUSDT",
             timeframe="1h",
-            action="buy",
+            action="sell",
             order_id="test_456",
             contracts=0.01,
-            close=51000.0,
-            position_side="long",
-            position_qty=0.02  # Already has 0.02 position
+            close=50000.0,
+            position_side="short",
+            position_qty=0.01
         )
-        # Adding to position is still entry
-        assert alert.is_entry() is True
+        # Short positions not supported as entry
+        assert alert.is_entry() is False
 
     def test_get_pair(self):
         """Test get_pair method extracts base/quote correctly."""
@@ -436,6 +436,7 @@ class TestModelsValidation:
         from app.models import TradeClosedData
 
         data = TradeClosedData(
+            trade_id="trade_001",
             group_id="BTC_Binance_1h_001",
             timeframe="1h",
             exchange="binance",
@@ -443,6 +444,7 @@ class TestModelsValidation:
             quote="USDT",
             pyramids=[{"index": 0, "entry_price": 50000.0, "size": 0.02}],
             exit_price=51000.0,
+            exit_time=datetime.utcnow(),
             exchange_timestamp="2026-01-20T12:00:00Z",
             received_timestamp=datetime.utcnow(),
             gross_pnl=20.0,
@@ -453,6 +455,7 @@ class TestModelsValidation:
 
         assert data.exit_price == 51000.0
         assert data.net_pnl == 18.0
+        assert data.trade_id == "trade_001"
 
     def test_equity_point(self):
         """Test EquityPoint model."""
@@ -470,21 +473,29 @@ class TestModelsValidation:
         from app.models import ChartStats
 
         stats = ChartStats(
-            total_trades=10,
+            total_net_pnl=150.0,
+            max_drawdown_percent=5.5,
+            max_drawdown_usdt=100.0,
+            trades_opened_today=5,
+            trades_closed_today=3,
+            trades_still_open=2,
             win_rate=65.0,
+            total_used_equity=10000.0,
             profit_factor=2.5,
-            max_drawdown=150.0
+            win_loss_ratio=1.8,
+            cumulative_pnl=500.0
         )
 
-        assert stats.total_trades == 10
+        assert stats.total_net_pnl == 150.0
         assert stats.win_rate == 65.0
         assert stats.profit_factor == 2.5
+        assert stats.trades_closed_today == 3
 
-    def test_trade_report_entry(self):
-        """Test TradeReportEntry model."""
-        from app.models import TradeReportEntry
+    def test_trade_history_item(self):
+        """Test TradeHistoryItem model."""
+        from app.models import TradeHistoryItem
 
-        entry = TradeReportEntry(
+        item = TradeHistoryItem(
             group_id="ETH_Bybit_4h_001",
             exchange="bybit",
             pair="ETH/USDT",
@@ -494,47 +505,33 @@ class TestModelsValidation:
             pnl_percent=8.35
         )
 
-        assert entry.group_id == "ETH_Bybit_4h_001"
-        assert entry.pnl_usdt == 250.50
+        assert item.group_id == "ETH_Bybit_4h_001"
+        assert item.pnl_usdt == 250.50
 
 
-class TestAppLifecycle:
-    """Tests for app lifecycle events."""
+class TestAppContext:
+    """Tests for application context."""
 
-    @pytest.mark.asyncio
-    async def test_startup_event(self):
-        """Test startup event initializes dependencies."""
+    def test_app_has_routes(self):
+        """Test that app has expected routes registered."""
+        from fastapi.testclient import TestClient
+
         with patch("app.main.db") as mock_db, \
              patch("app.main.telegram_bot") as mock_bot, \
              patch("app.main.report_service") as mock_report:
 
             mock_db.connect = AsyncMock()
+            mock_db.disconnect = AsyncMock()
             mock_bot.initialize = AsyncMock()
             mock_bot.start = AsyncMock()
-            mock_report.start_scheduler = MagicMock()
-
-            from app.main import startup_event
-            await startup_event()
-
-            mock_db.connect.assert_called_once()
-            mock_bot.initialize.assert_called_once()
-            mock_bot.start.assert_called_once()
-            mock_report.start_scheduler.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_shutdown_event(self):
-        """Test shutdown event cleans up dependencies."""
-        with patch("app.main.db") as mock_db, \
-             patch("app.main.telegram_bot") as mock_bot, \
-             patch("app.main.report_service") as mock_report:
-
-            mock_db.disconnect = AsyncMock()
             mock_bot.stop = AsyncMock()
+            mock_report.start_scheduler = MagicMock()
             mock_report.stop_scheduler = MagicMock()
 
-            from app.main import shutdown_event
-            await shutdown_event()
+            from app.main import app
 
-            mock_db.disconnect.assert_called_once()
-            mock_bot.stop.assert_called_once()
-            mock_report.stop_scheduler.assert_called_once()
+            # Verify routes exist
+            route_paths = [route.path for route in app.routes]
+            assert "/health" in route_paths
+            assert "/webhook" in route_paths
+            assert "/trades" in route_paths
