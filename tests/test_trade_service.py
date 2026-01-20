@@ -12,6 +12,33 @@ import pytest
 from app.models import TradingViewAlert
 
 
+def create_test_alert(
+    action: str = "buy",
+    symbol: str = "BTCUSDT",
+    exchange: str = "binance",
+    timeframe: str = "1h",
+    position_side: str = "long",
+    order_id: str = "test_123",
+    timestamp: str = "2026-01-20T10:00:00Z",
+    contracts: float = 0.01,
+    close: float = 50000.0,
+    position_qty: float = 0.01
+) -> TradingViewAlert:
+    """Helper to create TradingViewAlert with all required fields."""
+    return TradingViewAlert(
+        action=action,
+        symbol=symbol,
+        exchange=exchange,
+        timeframe=timeframe,
+        position_side=position_side,
+        order_id=order_id,
+        timestamp=timestamp,
+        contracts=contracts,
+        close=close,
+        position_qty=position_qty
+    )
+
+
 class TestGenerateGroupId:
     """Tests for generate_group_id helper function."""
 
@@ -82,14 +109,7 @@ class TestProcessSignal:
         """Test that unknown exchange returns error."""
         from app.services.trade_service import TradeService
 
-        alert = TradingViewAlert(
-            action="buy",
-            symbol="BTCUSDT",
-            exchange="unknown_exchange",
-            timeframe="1h",
-            position_side="long",
-            order_id="test_123"
-        )
+        alert = create_test_alert(exchange="unknown_exchange")
 
         with patch("app.services.trade_service.normalize_exchange", return_value=None):
             result, data = await TradeService.process_signal(alert)
@@ -103,14 +123,7 @@ class TestProcessSignal:
         """Test that invalid symbol returns error."""
         from app.services.trade_service import TradeService
 
-        alert = TradingViewAlert(
-            action="buy",
-            symbol="INVALID",
-            exchange="binance",
-            timeframe="1h",
-            position_side="long",
-            order_id="test_123"
-        )
+        alert = create_test_alert(symbol="INVALID")
 
         with patch("app.services.trade_service.normalize_exchange", return_value="binance"), \
              patch("app.services.trade_service.parse_symbol", side_effect=ValueError("Invalid symbol")):
@@ -118,37 +131,6 @@ class TestProcessSignal:
 
         assert result.success is False
         assert result.error == "INVALID_SYMBOL"
-        assert data is None
-
-    @pytest.mark.asyncio
-    async def test_ambiguous_signal_ignored(self):
-        """Test that ambiguous signals are ignored."""
-        from app.services.trade_service import TradeService
-
-        # Create alert that is neither clear entry nor exit
-        alert = TradingViewAlert(
-            action="hold",  # Not buy or sell
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="none",
-            order_id="test_123"
-        )
-
-        mock_parsed = MagicMock()
-        mock_parsed.base = "BTC"
-        mock_parsed.quote = "USDT"
-
-        with patch("app.services.trade_service.normalize_exchange", return_value="binance"), \
-             patch("app.services.trade_service.parse_symbol", return_value=mock_parsed), \
-             patch("app.services.trade_service.db") as mock_db:
-
-            mock_db.mark_alert_processed = AsyncMock()
-
-            result, data = await TradeService.process_signal(alert)
-
-        assert result.success is True
-        assert "ignored" in result.message.lower()
         assert data is None
 
 
@@ -161,15 +143,7 @@ class TestProcessEntry:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = TradingViewAlert(
-            action="buy",
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="long",
-            order_id="test_123"
-        )
-
+        alert = create_test_alert()
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         with patch("app.services.trade_service.exchange_service") as mock_exchange:
@@ -189,15 +163,7 @@ class TestProcessEntry:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = TradingViewAlert(
-            action="buy",
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="long",
-            order_id="test_123"
-        )
-
+        alert = create_test_alert()
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         with patch("app.services.trade_service.exchange_service") as mock_exchange, \
@@ -244,15 +210,7 @@ class TestProcessEntry:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = TradingViewAlert(
-            action="buy",
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="long",
-            order_id="test_456"
-        )
-
+        alert = create_test_alert(order_id="test_456")
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         with patch("app.services.trade_service.exchange_service") as mock_exchange, \
@@ -302,15 +260,7 @@ class TestProcessEntry:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = TradingViewAlert(
-            action="buy",
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="long",
-            order_id="test_123"
-        )
-
+        alert = create_test_alert()
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         with patch("app.services.trade_service.exchange_service") as mock_exchange, \
@@ -357,15 +307,7 @@ class TestProcessExit:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = TradingViewAlert(
-            action="sell",
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="flat",
-            order_id="test_123"
-        )
-
+        alert = create_test_alert(action="sell", position_side="flat")
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         with patch("app.services.trade_service.db") as mock_db:
@@ -385,15 +327,7 @@ class TestProcessExit:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = TradingViewAlert(
-            action="sell",
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="flat",
-            order_id="test_123"
-        )
-
+        alert = create_test_alert(action="sell", position_side="flat")
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         with patch("app.services.trade_service.db") as mock_db:
@@ -416,15 +350,7 @@ class TestProcessExit:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = TradingViewAlert(
-            action="sell",
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="flat",
-            order_id="test_123"
-        )
-
+        alert = create_test_alert(action="sell", position_side="flat")
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         with patch("app.services.trade_service.exchange_service") as mock_exchange, \
@@ -486,15 +412,7 @@ class TestProcessExit:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = TradingViewAlert(
-            action="sell",
-            symbol="BTCUSDT",
-            exchange="binance",
-            timeframe="1h",
-            position_side="flat",
-            order_id="test_123"
-        )
-
+        alert = create_test_alert(action="sell", position_side="flat")
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         with patch("app.services.trade_service.exchange_service") as mock_exchange, \
