@@ -669,3 +669,246 @@ class TestIsEnabledNoChannelId:
             mock_settings.telegram_channel_id = ""
 
             assert service.is_enabled is False
+
+
+class TestFormatterEdgeCases:
+    """Edge case tests for formatting methods."""
+
+    def test_format_price_zero(self):
+        """Test formatting zero price."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_price(0)
+        assert "$0" in result
+
+    def test_format_price_very_large(self):
+        """Test formatting very large price (Bitcoin ATH scenario)."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_price(150000.50)
+        assert "$150,000" in result
+
+    def test_format_price_very_small(self):
+        """Test formatting very small price (meme coin scenario)."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_price(0.00000001)
+        assert "$0.00000001" in result
+
+    def test_format_pnl_zero(self):
+        """Test formatting zero PnL."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_pnl(0)
+        assert "$0" in result
+
+    def test_format_pnl_very_large_positive(self):
+        """Test formatting very large positive PnL."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_pnl(10000.00)
+        assert "10" in result and "$" in result
+
+    def test_format_pnl_very_large_negative(self):
+        """Test formatting very large negative PnL."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_pnl(-10000.00)
+        assert "10" in result and "$" in result
+
+    def test_format_percent_zero(self):
+        """Test formatting zero percent."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_percent(0)
+        assert "0.00%" in result
+
+    def test_format_percent_very_large(self):
+        """Test formatting very large percentage (100%+ gain)."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_percent(150.50)
+        assert "150.50%" in result
+
+    def test_format_quantity_zero(self):
+        """Test formatting zero quantity."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_quantity(0)
+        assert "0" in result
+
+    def test_format_quantity_very_large(self):
+        """Test formatting very large quantity (SHIB scenario)."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_quantity(1000000000)
+        assert "1000000000" in result
+
+    def test_format_quantity_with_commas_zero(self):
+        """Test formatting zero quantity with commas."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        result = service._format_quantity_with_commas(0, "BTC")
+        assert "0" in result and "BTC" in result
+
+
+class TestTimestampEdgeCases:
+    """Edge case tests for timestamp handling."""
+
+    def test_parse_exchange_timestamp_iso_format_no_z(self):
+        """Test parsing ISO timestamp without Z suffix."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.timezone = "UTC"
+
+            result = service._parse_exchange_timestamp("2026-01-20T14:30:00")
+            # Should handle this format gracefully
+            assert result is not None
+
+    def test_parse_exchange_timestamp_with_milliseconds(self):
+        """Test parsing timestamp with milliseconds."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.timezone = "UTC"
+
+            result = service._parse_exchange_timestamp("2026-01-20T14:30:00.123Z")
+            assert "14:30" in result
+
+    def test_get_local_time_different_timezone(self):
+        """Test local time conversion with different timezone."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.timezone = "America/New_York"
+
+            utc_time = datetime(2026, 1, 20, 12, 0, 0, tzinfo=pytz.UTC)
+            local_time = service._get_local_time(utc_time)
+
+            # New York is UTC-5 in January
+            assert local_time.hour == 7
+
+
+class TestTradeClosedEdgeCases:
+    """Edge case tests for trade closed messages."""
+
+    def test_format_trade_closed_breakeven(self):
+        """Test formatting trade closed message with zero PnL."""
+        from app.services.telegram_service import TelegramService
+        from app.models import TradeClosedData
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.timezone = "UTC"
+
+            data = TradeClosedData(
+                trade_id="trade_001",
+                group_id="BTC_Binance_1h_001",
+                timeframe="1h",
+                exchange="binance",
+                base="BTC",
+                quote="USDT",
+                pyramids=[
+                    {
+                        "index": 0,
+                        "entry_price": 50000.0,
+                        "size": 0.02,
+                        "entry_time": "2026-01-20T10:00:00Z"
+                    }
+                ],
+                exit_price=50000.0,
+                exit_time=datetime.now(UTC),
+                exchange_timestamp="2026-01-20T12:00:00Z",
+                received_timestamp=datetime.now(UTC),
+                gross_pnl=0.0,
+                total_fees=2.0,
+                net_pnl=-2.0,  # Only fees lost
+                net_pnl_percent=-0.2
+            )
+
+            message = service.format_trade_closed_message(data)
+
+            assert "Trade Closed" in message
+            assert "BTC_Binance_1h_001" in message
+
+
+class TestDailyReportEdgeCases:
+    """Edge case tests for daily report messages."""
+
+    def test_format_daily_report_no_trades(self):
+        """Test formatting daily report with zero trades."""
+        from app.services.telegram_service import TelegramService
+        from app.models import DailyReportData
+
+        service = TelegramService()
+
+        data = DailyReportData(
+            date="2026-01-20",
+            total_trades=0,
+            total_pyramids=0,
+            total_pnl_usdt=0.0,
+            total_pnl_percent=0.0,
+            trades=[],
+            by_exchange={},
+            by_timeframe={},
+            by_pair={}
+        )
+
+        message = service.format_daily_report_message(data)
+
+        assert "Daily Report" in message
+        assert "Total Trades: 0" in message
+
+    def test_format_daily_report_negative_pnl(self):
+        """Test formatting daily report with negative PnL."""
+        from app.services.telegram_service import TelegramService
+        from app.models import DailyReportData
+
+        service = TelegramService()
+
+        data = DailyReportData(
+            date="2026-01-20",
+            total_trades=3,
+            total_pyramids=5,
+            total_pnl_usdt=-250.0,
+            total_pnl_percent=-8.5,
+            trades=[],
+            by_exchange={},
+            by_timeframe={},
+            by_pair={}
+        )
+
+        message = service.format_daily_report_message(data)
+
+        assert "Daily Report" in message
+        assert "Total Trades: 3" in message

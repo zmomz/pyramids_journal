@@ -354,6 +354,8 @@ class TestCmdTrades:
                 await cmd_trades(mock_update, mock_context)
 
                 mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Recent Trades" in call_args or "Trade" in call_args
 
     @pytest.mark.asyncio
     async def test_trades_today(self, mock_update, mock_context, populated_db):
@@ -395,6 +397,22 @@ class TestCmdStatus:
                     await cmd_status(mock_update, mock_context)
 
                     mock_update.message.reply_text.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_status_no_open_trades(self, mock_update, mock_context, test_db):
+        """Test /status with no open trades shows appropriate message."""
+        from app.bot.handlers import cmd_status
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", test_db):
+                await cmd_status(mock_update, mock_context)
+
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "No open" in call_args or "no open" in call_args
 
 
 class TestCmdHelp:
@@ -548,6 +566,9 @@ class TestCmdExchange:
                 await cmd_exchange(mock_update, mock_context)
 
                 mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                # Should contain exchange name and stats
+                assert "Binance" in call_args or "binance" in call_args.lower()
 
     @pytest.mark.asyncio
     async def test_exchange_with_name_and_period(self, mock_update, mock_context, populated_db):
@@ -659,142 +680,6 @@ class TestSetupHandlers:
         assert mock_app.add_handler.call_count > 0
 
 
-class TestCmdBest:
-    """Tests for /best command."""
-
-    @pytest.mark.asyncio
-    async def test_best_all_time(self, mock_update, mock_context, populated_db):
-        """Test /best command for all-time."""
-        from app.bot.handlers import cmd_best
-
-        mock_context.args = []
-
-        with patch("app.bot.handlers._bot") as mock_bot:
-            mock_bot.is_valid_chat.return_value = True
-
-            with patch("app.bot.handlers.db", populated_db):
-                await cmd_best(mock_update, mock_context)
-
-                mock_update.message.reply_text.assert_called_once()
-                call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "Best" in call_args or "Top" in call_args
-
-    @pytest.mark.asyncio
-    async def test_best_today(self, mock_update, mock_context, populated_db):
-        """Test /best today command."""
-        from app.bot.handlers import cmd_best
-
-        mock_context.args = ["today"]
-
-        with patch("app.bot.handlers._bot") as mock_bot:
-            mock_bot.is_valid_chat.return_value = True
-
-            with patch("app.bot.handlers.db", populated_db):
-                await cmd_best(mock_update, mock_context)
-
-                call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "Today" in call_args
-
-
-class TestCmdWorst:
-    """Tests for /worst command."""
-
-    @pytest.mark.asyncio
-    async def test_worst_all_time(self, mock_update, mock_context, populated_db):
-        """Test /worst command for all-time."""
-        from app.bot.handlers import cmd_worst
-
-        mock_context.args = []
-
-        with patch("app.bot.handlers._bot") as mock_bot:
-            mock_bot.is_valid_chat.return_value = True
-
-            with patch("app.bot.handlers.db", populated_db):
-                await cmd_worst(mock_update, mock_context)
-
-                mock_update.message.reply_text.assert_called_once()
-                call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "Worst" in call_args or "Bottom" in call_args
-
-
-class TestCmdStreak:
-    """Tests for /streak command."""
-
-    @pytest.mark.asyncio
-    async def test_streak_all_time(self, mock_update, mock_context, populated_db):
-        """Test /streak command for all-time."""
-        from app.bot.handlers import cmd_streak
-
-        mock_context.args = []
-
-        with patch("app.bot.handlers._bot") as mock_bot:
-            mock_bot.is_valid_chat.return_value = True
-
-            with patch("app.bot.handlers.db", populated_db):
-                await cmd_streak(mock_update, mock_context)
-
-                mock_update.message.reply_text.assert_called_once()
-                call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "Streak" in call_args
-
-
-class TestCmdDrawdown:
-    """Tests for /drawdown command."""
-
-    @pytest.mark.asyncio
-    async def test_drawdown_all_time(self, mock_update, mock_context, populated_db):
-        """Test /drawdown command for all-time."""
-        from app.bot.handlers import cmd_drawdown
-
-        mock_context.args = []
-
-        with patch("app.bot.handlers._bot") as mock_bot:
-            mock_bot.is_valid_chat.return_value = True
-
-            with patch("app.bot.handlers.db", populated_db):
-                await cmd_drawdown(mock_update, mock_context)
-
-                mock_update.message.reply_text.assert_called_once()
-                call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "Drawdown" in call_args or "drawdown" in call_args
-
-
-class TestCmdTrades:
-    """Tests for /trades command."""
-
-    @pytest.mark.asyncio
-    async def test_trades_default_limit(self, mock_update, mock_context, populated_db):
-        """Test /trades command with default limit."""
-        from app.bot.handlers import cmd_trades
-
-        mock_context.args = []
-
-        with patch("app.bot.handlers._bot") as mock_bot:
-            mock_bot.is_valid_chat.return_value = True
-
-            with patch("app.bot.handlers.db", populated_db):
-                await cmd_trades(mock_update, mock_context)
-
-                mock_update.message.reply_text.assert_called_once()
-                call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "Trade" in call_args or "trade" in call_args
-
-    @pytest.mark.asyncio
-    async def test_trades_with_limit(self, mock_update, mock_context, populated_db):
-        """Test /trades command with numeric limit."""
-        from app.bot.handlers import cmd_trades
-
-        mock_context.args = ["5"]
-
-        with patch("app.bot.handlers._bot") as mock_bot:
-            mock_bot.is_valid_chat.return_value = True
-
-            with patch("app.bot.handlers.db", populated_db):
-                await cmd_trades(mock_update, mock_context)
-
-                mock_update.message.reply_text.assert_called_once()
-
-
 class TestCmdHistory:
     """Tests for /history command."""
 
@@ -827,26 +712,9 @@ class TestCmdHistory:
                 await cmd_history(mock_update, mock_context)
 
                 mock_update.message.reply_text.assert_called_once()
-
-
-class TestCmdStatus:
-    """Tests for /status command."""
-
-    @pytest.mark.asyncio
-    async def test_status_no_open_trades(self, mock_update, mock_context, test_db):
-        """Test /status with no open trades."""
-        from app.bot.handlers import cmd_status
-
-        mock_context.args = []
-
-        with patch("app.bot.handlers._bot") as mock_bot:
-            mock_bot.is_valid_chat.return_value = True
-
-            with patch("app.bot.handlers.db", test_db):
-                await cmd_status(mock_update, mock_context)
-
                 call_args = mock_update.message.reply_text.call_args[0][0]
-                assert "No open" in call_args or "no open" in call_args
+                # Should contain the pair name
+                assert "BTC" in call_args or "History" in call_args
 
 
 class TestCmdReset:

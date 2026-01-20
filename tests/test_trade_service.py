@@ -466,3 +466,219 @@ class TestGetTradeSummary:
             summary = await TradeService.get_trade_summary("nonexistent")
 
         assert summary is None
+
+
+class TestGenerateGroupIdEdgeCases:
+    """Edge case tests for generate_group_id function."""
+
+    def test_special_characters_in_symbol(self):
+        """Test group ID with special symbol names."""
+        from app.services.trade_service import generate_group_id
+
+        # Some exchanges have unusual symbol formats
+        group_id = generate_group_id("1000SHIB", "binance", "1h", 1)
+        assert group_id == "1000SHIB_Binance_1h_001"
+
+    def test_long_sequence_number(self):
+        """Test group ID with sequence number > 999."""
+        from app.services.trade_service import generate_group_id
+
+        group_id = generate_group_id("BTC", "binance", "1h", 1000)
+        assert group_id == "BTC_Binance_1h_1000"
+
+    def test_lowercase_exchange(self):
+        """Test exchange name normalization."""
+        from app.services.trade_service import generate_group_id
+
+        group_id = generate_group_id("BTC", "BINANCE", "1h", 1)
+        assert "_Binance_" in group_id
+
+
+class TestTradeResultEdgeCases:
+    """Edge case tests for TradeResult dataclass."""
+
+    def test_failed_result_with_error_data(self):
+        """Test TradeResult for failure with error details."""
+        from app.services.trade_service import TradeResult
+
+        result = TradeResult(
+            success=False,
+            message="Trade failed",
+            error="PRICE_FETCH_FAILED",
+            trade_id=None,
+            group_id=None,
+            price=None
+        )
+
+        assert result.success is False
+        assert result.error == "PRICE_FETCH_FAILED"
+        assert result.trade_id is None
+
+    def test_result_with_entry_data(self):
+        """Test TradeResult with entry data attached."""
+        from app.services.trade_service import TradeResult
+
+        mock_entry_data = {"pyramid_index": 0, "price": 50000.0}
+
+        result = TradeResult(
+            success=True,
+            message="Trade created",
+            trade_id="trade_123",
+            entry_data=mock_entry_data
+        )
+
+        assert result.entry_data == mock_entry_data
+
+
+class TestProcessEntryEdgeCases:
+    """Edge case tests for entry processing."""
+
+    @pytest.mark.asyncio
+    async def test_zero_contracts_alert(self):
+        """Test entry with zero contracts."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(contracts=0)
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config, \
+             patch("app.services.trade_service.settings") as mock_settings:
+
+            # Mock price fetch
+            mock_price = MagicMock()
+            mock_price.price = 50000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            # Mock symbol info
+            mock_symbol_info = MagicMock()
+            mock_symbol_info.qty_precision = 4
+            mock_exchange.get_symbol_info = AsyncMock(return_value=mock_symbol_info)
+            mock_exchange.round_quantity = MagicMock(return_value=0)
+
+            # Mock database
+            mock_db.get_open_trade_by_group = AsyncMock(return_value=None)
+            mock_db.get_next_group_sequence = AsyncMock(return_value=1)
+            mock_db.get_pyramid_capital = AsyncMock(return_value=0)
+
+            # Mock config
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+            mock_settings.validation_mode = "lenient"
+
+            result, data = await TradeService._process_entry(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        # Should handle zero contracts gracefully (either fail or create with 0)
+        assert result is not None
+
+
+class TestProcessExitEdgeCases:
+    """Edge case tests for exit processing."""
+
+    @pytest.mark.asyncio
+    async def test_exit_with_single_pyramid(self):
+        """Test exit with only one pyramid entry."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            # Mock exit price fetch
+            mock_price = MagicMock()
+            mock_price.price = 48000.0  # Exit at loss
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            # Mock database
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_123",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+
+            # Mock config
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        assert data.net_pnl < 0  # Should be at loss
+
+    @pytest.mark.asyncio
+    async def test_exit_with_many_pyramids(self):
+        """Test exit with many pyramid entries."""
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        # Create 5 pyramid entries
+        pyramids = [
+            {
+                "id": f"pyr_{i}",
+                "pyramid_index": i,
+                "entry_price": 50000.0 - (i * 500),  # Decreasing entry prices
+                "position_size": 0.02,
+                "capital_usdt": 1000.0,
+                "fee_usdt": 1.0,
+                "entry_time": f"2026-01-20T{10+i}:00:00"
+            }
+            for i in range(5)
+        ]
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            # Mock exit price fetch - above all entries
+            mock_price = MagicMock()
+            mock_price.price = 52000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            # Mock database
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_123",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=pyramids)
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock()
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+
+            # Mock config
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is True
+        assert len(data.pyramids) == 5
+        assert data.net_pnl > 0  # Should be profitable

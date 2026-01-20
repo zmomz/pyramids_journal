@@ -482,3 +482,110 @@ class TestPriceDataDataclass:
         # Test with a very large timestamp
         data2 = PriceData(price=60000.0, timestamp=9999999999999)
         assert data2.timestamp == 9999999999999
+
+
+class TestExchangeEdgeCases:
+    """Edge case tests for exchange functionality."""
+
+    def test_round_quantity_zero(self):
+        """Test quantity rounding with zero value."""
+        from app.exchanges.base import BaseExchange
+
+        class TestExchange(BaseExchange):
+            name = "test"
+            async def get_price(self, base, quote):
+                pass
+            async def get_symbol_info(self, base, quote):
+                pass
+            def format_symbol(self, base, quote):
+                return f"{base}{quote}"
+
+        exchange = TestExchange()
+        assert exchange.round_quantity(0, 4) == 0.0
+
+    def test_round_quantity_very_small(self):
+        """Test quantity rounding with very small values."""
+        from app.exchanges.base import BaseExchange
+
+        class TestExchange(BaseExchange):
+            name = "test"
+            async def get_price(self, base, quote):
+                pass
+            async def get_symbol_info(self, base, quote):
+                pass
+            def format_symbol(self, base, quote):
+                return f"{base}{quote}"
+
+        exchange = TestExchange()
+        assert exchange.round_quantity(0.000000001, 8) == 0.0
+
+    def test_round_price_zero_tick_size(self):
+        """Test price rounding with very small tick size."""
+        from app.exchanges.base import BaseExchange
+
+        class TestExchange(BaseExchange):
+            name = "test"
+            async def get_price(self, base, quote):
+                pass
+            async def get_symbol_info(self, base, quote):
+                pass
+            def format_symbol(self, base, quote):
+                return f"{base}{quote}"
+
+        exchange = TestExchange()
+        # Very small tick size for low-cap tokens
+        assert exchange.round_price(0.000012345, 0.00000001) == pytest.approx(0.00001235)
+
+    def test_round_quantity_large_value(self):
+        """Test quantity rounding with large values."""
+        from app.exchanges.base import BaseExchange
+
+        class TestExchange(BaseExchange):
+            name = "test"
+            async def get_price(self, base, quote):
+                pass
+            async def get_symbol_info(self, base, quote):
+                pass
+            def format_symbol(self, base, quote):
+                return f"{base}{quote}"
+
+        exchange = TestExchange()
+        assert exchange.round_quantity(1000000.123456, 2) == 1000000.12
+
+    def test_symbol_info_min_values(self):
+        """Test SymbolInfo with minimum values."""
+        from app.exchanges.base import SymbolInfo
+
+        info = SymbolInfo(
+            base="SHIB",
+            quote="USDT",
+            price_precision=8,
+            qty_precision=0,
+            min_qty=1,
+            min_notional=1.0,
+            tick_size=0.00000001
+        )
+
+        assert info.min_qty == 1
+        assert info.qty_precision == 0
+        assert info.tick_size == 0.00000001
+
+    def test_exchange_service_round_quantity_edge_cases(self):
+        """Test ExchangeService rounding with edge cases."""
+        from app.services.exchange_service import ExchangeService
+
+        # Zero quantity
+        assert ExchangeService.round_quantity(0, 4) == 0.0
+        # Large quantity
+        assert ExchangeService.round_quantity(999999.9999, 2) == 1000000.0
+        # Negative (should still round correctly if passed)
+        assert ExchangeService.round_quantity(-0.123, 2) == -0.12
+
+    def test_exchange_service_round_price_edge_cases(self):
+        """Test ExchangeService price rounding with edge cases."""
+        from app.services.exchange_service import ExchangeService
+
+        # Very small tick size
+        assert ExchangeService.round_price(0.00001234, 0.00000001) == 0.00001234
+        # Large tick size
+        assert ExchangeService.round_price(50123.45, 100) == 50100.0
