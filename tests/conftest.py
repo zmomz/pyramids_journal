@@ -7,7 +7,7 @@ import os
 import tempfile
 from datetime import datetime, timedelta
 from typing import AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, Mock
 
 import pytest
 import pytest_asyncio
@@ -16,6 +16,7 @@ import pytest_asyncio
 os.environ["TESTING"] = "1"
 os.environ["TELEGRAM_BOT_TOKEN"] = "test_token"
 os.environ["TELEGRAM_CHAT_ID"] = "-1001234567890"
+os.environ["TIMEZONE"] = "UTC"  # Use UTC for predictable date calculations
 
 
 @pytest.fixture(scope="session")
@@ -31,28 +32,24 @@ async def test_db():
     """Create an isolated in-memory database for testing."""
     from app.database import Database
 
-    # Create a new database instance with in-memory SQLite
-    db = Database()
-
     # Use a temporary file for the test database
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
         temp_db_path = f.name
 
-    # Patch the database path
-    original_path = db.db_path
-    db.db_path = temp_db_path
+    # Create database instance with temp path
+    db = Database(db_path=temp_db_path)
 
-    await db.connect()
+    # Patch ensure_data_directory to do nothing (we're using temp file)
+    with patch("app.database.ensure_data_directory"):
+        await db.connect()
 
     yield db
 
-    await db.close()
+    await db.disconnect()
 
     # Clean up temp file
     if os.path.exists(temp_db_path):
         os.unlink(temp_db_path)
-
-    db.db_path = original_path
 
 
 @pytest_asyncio.fixture

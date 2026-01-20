@@ -541,15 +541,32 @@ class TestGetRecentTrades:
         assert len(trades) == 2
 
 
-class TestGetOpenTrades:
-    """Tests for get_open_trades method."""
+class TestGetOpenTrade:
+    """Tests for get_open_trade method."""
 
     @pytest.mark.asyncio
-    async def test_get_open_trades(self, populated_db):
-        """Test getting all open trades."""
-        trades = await populated_db.get_open_trades()
+    async def test_get_open_trade(self, populated_db):
+        """Test getting an open trade for specific exchange/symbol."""
+        # trade_7 is open: exchange=binance, base=LINK, quote=USDT
+        trade = await populated_db.get_open_trade("binance", "LINK", "USDT")
 
-        # We have 1 open trade
-        assert len(trades) == 1
-        assert trades[0]["id"] == "trade_7"
-        assert trades[0]["status"] == "open"
+        assert trade is not None
+        assert trade["id"] == "trade_7"
+        assert trade["status"] == "open"
+
+    @pytest.mark.asyncio
+    async def test_get_open_trade_not_found(self, populated_db):
+        """Test getting open trade when none exists for symbol."""
+        # BTC/USDT is closed, not open
+        trade = await populated_db.get_open_trade("binance", "BTC", "USDT")
+
+        # Should return None since BTC/USDT trade is closed
+        assert trade is None
+
+    @pytest.mark.asyncio
+    async def test_get_open_trade_wrong_exchange(self, populated_db):
+        """Test getting open trade with wrong exchange."""
+        # LINK trade is on binance, not bybit
+        trade = await populated_db.get_open_trade("bybit", "LINK", "USDT")
+
+        assert trade is None

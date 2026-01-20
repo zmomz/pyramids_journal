@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+import pytz
 
 
 class TestParseDateFilter:
@@ -27,46 +28,64 @@ class TestParseDateFilter:
     def test_today_filter(self):
         """Test 'today' filter."""
         from app.bot.handlers import parse_date_filter
+        from app.config import settings
 
         start, end, label = parse_date_filter(["today"])
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Use same timezone as the handler
+        tz = pytz.timezone(settings.timezone)
+        now = datetime.now(tz)
+        today = now.strftime("%Y-%m-%d")
 
         assert start == today
         assert end == today
-        assert label == "Today"
+        assert label == f"Today ({today})"
 
     def test_yesterday_filter(self):
         """Test 'yesterday' filter."""
         from app.bot.handlers import parse_date_filter
+        from app.config import settings
 
         start, end, label = parse_date_filter(["yesterday"])
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        # Use same timezone as the handler
+        tz = pytz.timezone(settings.timezone)
+        now = datetime.now(tz)
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
 
         assert start == yesterday
         assert end == yesterday
-        assert label == "Yesterday"
+        assert label == f"Yesterday ({yesterday})"
 
     def test_week_filter(self):
         """Test 'week' filter."""
         from app.bot.handlers import parse_date_filter
+        from app.config import settings
 
         start, end, label = parse_date_filter(["week"])
-        today = datetime.now().strftime("%Y-%m-%d")
-        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        # Use same timezone as the handler
+        tz = pytz.timezone(settings.timezone)
+        now = datetime.now(tz)
+        today = now.strftime("%Y-%m-%d")
+        # 6 days ago + today = 7 days total
+        week_start = (now - timedelta(days=6)).strftime("%Y-%m-%d")
 
-        assert start == week_ago
+        assert start == week_start
         assert end == today
         assert label == "Last 7 Days"
 
     def test_month_filter(self):
         """Test 'month' filter."""
         from app.bot.handlers import parse_date_filter
+        from app.config import settings
 
         start, end, label = parse_date_filter(["month"])
-        today = datetime.now().strftime("%Y-%m-%d")
-        month_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        # Use same timezone as the handler
+        tz = pytz.timezone(settings.timezone)
+        now = datetime.now(tz)
+        today = now.strftime("%Y-%m-%d")
+        # 29 days ago + today = 30 days total
+        month_start = (now - timedelta(days=29)).strftime("%Y-%m-%d")
 
-        assert start == month_ago
+        assert start == month_start
         assert end == today
         assert label == "Last 30 Days"
 
@@ -367,9 +386,11 @@ class TestCmdStatus:
             mock_bot.is_valid_chat.return_value = True
 
             with patch("app.bot.handlers.db", populated_db):
-                # Mock get_current_prices
-                with patch("app.bot.handlers.get_current_prices") as mock_prices:
-                    mock_prices.return_value = {}
+                # Mock exchange_service.get_price
+                with patch("app.bot.handlers.exchange_service") as mock_exchange:
+                    mock_price = MagicMock()
+                    mock_price.price = 50000.0
+                    mock_exchange.get_price = AsyncMock(return_value=mock_price)
 
                     await cmd_status(mock_update, mock_context)
 
@@ -427,7 +448,7 @@ class TestCmdFees:
     """Tests for /fees command."""
 
     @pytest.mark.asyncio
-    async def test_fees_shows_exchange_fees(self, mock_update, mock_context, test_db):
+    async def test_fees_shows_exchange_fees(self, mock_update, mock_context):
         """Test /fees command shows exchange fees."""
         from app.bot.handlers import cmd_fees
 
@@ -436,16 +457,19 @@ class TestCmdFees:
         with patch("app.bot.handlers._bot") as mock_bot:
             mock_bot.is_valid_chat.return_value = True
 
-            with patch("app.bot.handlers.db", test_db):
-                # Mock get_exchange_fees
-                with patch.object(test_db, "get_exchange_fees", return_value={
-                    "binance": {"maker_fee": 0.1, "taker_fee": 0.1},
-                }):
-                    await cmd_fees(mock_update, mock_context)
+            # Mock exchange_config with sample fees
+            mock_fee = MagicMock()
+            mock_fee.maker_fee = 0.001
+            mock_fee.taker_fee = 0.001
 
-                    mock_update.message.reply_text.assert_called_once()
-                    call_args = mock_update.message.reply_text.call_args[0][0]
-                    assert "Fees" in call_args
+            with patch("app.bot.handlers.exchange_config") as mock_config:
+                mock_config.exchanges = {"binance": mock_fee}
+
+                await cmd_fees(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Fees" in call_args
 
 
 class TestChannelValidation:
