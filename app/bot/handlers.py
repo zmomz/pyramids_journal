@@ -286,7 +286,7 @@ async def generate_period_report(days: int):
     from ..models import DailyReportData
     from collections import defaultdict
 
-    end_date = datetime.utcnow()
+    end_date = datetime.now(UTC)
     start_date = end_date - timedelta(days=days)
 
     cursor = await db.connection.execute(
@@ -741,7 +741,7 @@ async def cmd_setfee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         # Save to settings table
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            (f"fee_{exchange}_taker", str(rate), datetime.utcnow().isoformat())
+            (f"fee_{exchange}_taker", str(rate), datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
 
@@ -768,7 +768,7 @@ async def cmd_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            ("timezone", tz, datetime.utcnow().isoformat())
+            ("timezone", tz, datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
 
@@ -792,7 +792,7 @@ async def cmd_reporttime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            ("daily_report_time", time_str, datetime.utcnow().isoformat())
+            ("daily_report_time", time_str, datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
 
@@ -866,7 +866,7 @@ async def cmd_signals_channel(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Save to database
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            ("signals_channel_id", channel_id, datetime.utcnow().isoformat())
+            ("signals_channel_id", channel_id, datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
 
@@ -995,7 +995,7 @@ async def cmd_pause(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            ("paused", "true", datetime.utcnow().isoformat())
+            ("paused", "true", datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
         await update.message.reply_text("⏸️ Signal processing paused")
@@ -1010,7 +1010,7 @@ async def cmd_resume(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     try:
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            ("paused", "false", datetime.utcnow().isoformat())
+            ("paused", "false", datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
         await update.message.reply_text("▶️ Signal processing resumed")
@@ -1043,7 +1043,7 @@ async def cmd_ignore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            ("ignored_pairs", ",".join(ignored), datetime.utcnow().isoformat())
+            ("ignored_pairs", ",".join(ignored), datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
 
@@ -1077,7 +1077,7 @@ async def cmd_unignore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            ("ignored_pairs", ",".join(ignored), datetime.utcnow().isoformat())
+            ("ignored_pairs", ",".join(ignored), datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
 

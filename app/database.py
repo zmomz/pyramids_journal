@@ -325,11 +325,11 @@ class Database:
                 entry_price,
                 position_size,
                 capital_usdt,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
                 fee_rate,
                 fee_usdt,
                 exchange_timestamp,
-                received_timestamp or datetime.utcnow().isoformat(),
+                received_timestamp or datetime.now(UTC).isoformat(),
             ),
         )
         await self.connection.commit()
@@ -374,10 +374,10 @@ class Database:
                 exit_id,
                 trade_id,
                 exit_price,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
                 fee_usdt,
                 exchange_timestamp,
-                received_timestamp or datetime.utcnow().isoformat(),
+                received_timestamp or datetime.now(UTC).isoformat(),
             ),
         )
         await self.connection.commit()
@@ -425,7 +425,7 @@ class Database:
                 min_qty,
                 min_notional,
                 tick_size,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
         await self.connection.commit()
@@ -921,7 +921,7 @@ class Database:
         """Set a setting value."""
         await self.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            (key, value, datetime.utcnow().isoformat()),
+            (key, value, datetime.now(UTC).isoformat()),
         )
         await self.connection.commit()
 
@@ -961,7 +961,7 @@ class Database:
                 SET next_sequence = ?, updated_at = ?
                 WHERE base = ? AND exchange = ? AND timeframe = ?
                 """,
-                (seq + 1, datetime.utcnow().isoformat(), base, exchange, timeframe),
+                (seq + 1, datetime.now(UTC).isoformat(), base, exchange, timeframe),
             )
         else:
             seq = 1
@@ -971,7 +971,7 @@ class Database:
                 (base, exchange, timeframe, next_sequence, updated_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (base, exchange, timeframe, 2, datetime.utcnow().isoformat()),
+                (base, exchange, timeframe, 2, datetime.now(UTC).isoformat()),
             )
 
         await self.connection.commit()
@@ -1017,7 +1017,7 @@ class Database:
                 quote,
                 timeframe,
                 position_side,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
         await self.connection.commit()
