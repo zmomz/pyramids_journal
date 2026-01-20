@@ -558,10 +558,13 @@ class TestProcessEntryEdgeCases:
             mock_exchange.get_symbol_info = AsyncMock(return_value=mock_symbol_info)
             mock_exchange.round_quantity = MagicMock(return_value=0)
 
-            # Mock database
+            # Mock database - all async methods need AsyncMock
             mock_db.get_open_trade_by_group = AsyncMock(return_value=None)
             mock_db.get_next_group_sequence = AsyncMock(return_value=1)
             mock_db.get_pyramid_capital = AsyncMock(return_value=0)
+            mock_db.create_trade_with_group = AsyncMock()
+            mock_db.add_pyramid = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
 
             # Mock config
             mock_config.get_fee_rate = MagicMock(return_value=0.001)

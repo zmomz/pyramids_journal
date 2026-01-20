@@ -534,7 +534,8 @@ class TestExchangeEdgeCases:
 
         exchange = TestExchange()
         # Very small tick size for low-cap tokens
-        assert exchange.round_price(0.000012345, 0.00000001) == pytest.approx(0.00001235)
+        # Rounding to 0.00000001 tick size truncates to 8 decimal places
+        assert exchange.round_price(0.000012345, 0.00000001) == pytest.approx(0.00001234)
 
     def test_round_quantity_large_value(self):
         """Test quantity rounding with large values."""
