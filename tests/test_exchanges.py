@@ -48,9 +48,10 @@ class TestExchangeBase:
 
         exchange = TestExchange()
         # round_price takes tick_size, not precision
-        assert exchange.round_price(50000.123, 0.01) == 50000.12
-        assert exchange.round_price(50000.127, 0.01) == 50000.13
-        assert exchange.round_price(100.5, 1.0) == 101.0
+        # Use pytest.approx for floating point comparisons
+        assert exchange.round_price(50000.123, 0.01) == pytest.approx(50000.12)
+        assert exchange.round_price(50000.127, 0.01) == pytest.approx(50000.13)
+        assert exchange.round_price(100.5, 1.0) == pytest.approx(101.0)
 
 
 class TestExchangeService:
@@ -276,3 +277,209 @@ class TestMEXCExchange:
 
         exchange = MEXCExchange()
         assert exchange.format_symbol("BTC", "USDT") == "BTCUSDT"
+
+
+class TestExchangeNames:
+    """Tests for exchange name properties."""
+
+    def test_binance_name(self):
+        """Test Binance exchange name."""
+        from app.exchanges.binance import BinanceExchange
+
+        exchange = BinanceExchange()
+        assert exchange.name == "binance"
+
+    def test_bybit_name(self):
+        """Test Bybit exchange name."""
+        from app.exchanges.bybit import BybitExchange
+
+        exchange = BybitExchange()
+        assert exchange.name == "bybit"
+
+    def test_kucoin_name(self):
+        """Test KuCoin exchange name."""
+        from app.exchanges.kucoin import KucoinExchange
+
+        exchange = KucoinExchange()
+        assert exchange.name == "kucoin"
+
+    def test_okx_name(self):
+        """Test OKX exchange name."""
+        from app.exchanges.okx import OKXExchange
+
+        exchange = OKXExchange()
+        assert exchange.name == "okx"
+
+    def test_gateio_name(self):
+        """Test Gate.io exchange name."""
+        from app.exchanges.gateio import GateIOExchange
+
+        exchange = GateIOExchange()
+        assert exchange.name == "gateio"
+
+    def test_mexc_name(self):
+        """Test MEXC exchange name."""
+        from app.exchanges.mexc import MEXCExchange
+
+        exchange = MEXCExchange()
+        assert exchange.name == "mexc"
+
+
+class TestBinanceGetPrice:
+    """Tests for Binance get_price method."""
+
+    @pytest.mark.asyncio
+    async def test_get_price_success(self):
+        """Test successful price fetch from Binance."""
+        from app.exchanges.binance import BinanceExchange
+
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.json = AsyncMock(return_value={
+                "price": "50000.50",
+                "time": 1705762800000
+            })
+            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_response.__aexit__ = AsyncMock(return_value=None)
+
+            mock_session = MagicMock()
+            mock_session.get = MagicMock(return_value=mock_response)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=None)
+            mock_session_class.return_value = mock_session
+
+            exchange = BinanceExchange()
+            async with exchange:
+                price_data = await exchange.get_price("BTC", "USDT")
+
+            assert price_data.price == 50000.50
+
+
+class TestBybitGetPrice:
+    """Tests for Bybit get_price method."""
+
+    @pytest.mark.asyncio
+    async def test_get_price_success(self):
+        """Test successful price fetch from Bybit."""
+        from app.exchanges.bybit import BybitExchange
+
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_response = AsyncMock()
+            mock_response.status = 200
+            mock_response.json = AsyncMock(return_value={
+                "retCode": 0,
+                "result": {
+                    "list": [{"lastPrice": "50000.50"}]
+                }
+            })
+            mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+            mock_response.__aexit__ = AsyncMock(return_value=None)
+
+            mock_session = MagicMock()
+            mock_session.get = MagicMock(return_value=mock_response)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=None)
+            mock_session_class.return_value = mock_session
+
+            exchange = BybitExchange()
+            async with exchange:
+                price_data = await exchange.get_price("BTC", "USDT")
+
+            assert price_data.price == 50000.50
+
+
+class TestExchangeServiceIntegration:
+    """Integration tests for ExchangeService."""
+
+    def test_get_all_supported_exchanges(self):
+        """Test getting all supported exchange names."""
+        from app.services.exchange_service import ExchangeService
+
+        # Test all known exchanges
+        exchanges = ["binance", "bybit", "okx", "kucoin", "gateio", "mexc"]
+
+        for exchange_name in exchanges:
+            adapter = ExchangeService.get_exchange_adapter(exchange_name)
+            assert adapter is not None
+
+    def test_unknown_exchange_raises_error(self):
+        """Test that unknown exchange raises ValueError."""
+        from app.services.exchange_service import ExchangeService
+
+        with pytest.raises(ValueError, match="Unknown exchange"):
+            ExchangeService.get_exchange_adapter("unknown_exchange")
+
+
+class TestBaseExchangeContextManager:
+    """Tests for BaseExchange context manager."""
+
+    @pytest.mark.asyncio
+    async def test_context_manager_creates_session(self):
+        """Test that context manager creates and closes session."""
+        from app.exchanges.binance import BinanceExchange
+
+        exchange = BinanceExchange()
+
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session = MagicMock()
+            mock_session.close = AsyncMock()
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=None)
+            mock_session_class.return_value = mock_session
+
+            async with exchange:
+                pass
+
+            mock_session.close.assert_called_once()
+
+
+class TestSymbolInfoDataclass:
+    """Tests for SymbolInfo dataclass."""
+
+    def test_symbol_info_creation(self):
+        """Test SymbolInfo dataclass creation."""
+        from app.exchanges.base import SymbolInfo
+
+        info = SymbolInfo(
+            base="BTC",
+            quote="USDT",
+            price_precision=2,
+            qty_precision=4,
+            min_qty=0.0001,
+            min_notional=10.0,
+            tick_size=0.01
+        )
+
+        assert info.base == "BTC"
+        assert info.quote == "USDT"
+        assert info.price_precision == 2
+        assert info.qty_precision == 4
+        assert info.min_qty == 0.0001
+        assert info.min_notional == 10.0
+        assert info.tick_size == 0.01
+
+
+class TestPriceDataDataclass:
+    """Tests for PriceData dataclass."""
+
+    def test_price_data_creation(self):
+        """Test PriceData dataclass creation."""
+        from app.exchanges.base import PriceData
+
+        data = PriceData(
+            price=50000.50,
+            timestamp=1705762800000
+        )
+
+        assert data.price == 50000.50
+        assert data.timestamp == 1705762800000
+
+    def test_price_data_optional_timestamp(self):
+        """Test PriceData with optional timestamp."""
+        from app.exchanges.base import PriceData
+
+        data = PriceData(price=50000.50)
+
+        assert data.price == 50000.50
+        assert data.timestamp is None

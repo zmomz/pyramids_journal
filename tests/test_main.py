@@ -288,3 +288,253 @@ class TestDailyReportData:
         assert report.trades == []
         assert report.equity_points == []
         assert report.chart_stats is None
+
+
+class TestWebhookEndpoint:
+    """Tests for /webhook endpoint."""
+
+    def test_webhook_unauthorized(self):
+        """Test webhook rejects requests with wrong secret."""
+        from fastapi.testclient import TestClient
+
+        with patch("app.main.db") as mock_db, \
+             patch("app.main.telegram_bot") as mock_bot, \
+             patch("app.main.report_service") as mock_report, \
+             patch("app.main.settings") as mock_settings:
+
+            mock_db.connect = AsyncMock()
+            mock_db.disconnect = AsyncMock()
+            mock_bot.initialize = AsyncMock()
+            mock_bot.start = AsyncMock()
+            mock_bot.stop = AsyncMock()
+            mock_report.start_scheduler = MagicMock()
+            mock_report.stop_scheduler = MagicMock()
+            mock_settings.webhook_secret = "correct_secret"
+
+            from app.main import app
+            client = TestClient(app, raise_server_exceptions=False)
+
+            response = client.post(
+                "/webhook",
+                json={"action": "buy"},
+                headers={"X-Webhook-Secret": "wrong_secret"}
+            )
+            assert response.status_code == 401
+
+
+class TestTradingViewAlertModel:
+    """Tests for TradingViewAlert model."""
+
+    def test_short_entry_signal(self):
+        """Test sell + short = entry for short position."""
+        from app.models import TradingViewAlert
+
+        alert = TradingViewAlert(
+            timestamp="2026-01-20T10:00:00Z",
+            exchange="binance",
+            symbol="BTCUSDT",
+            timeframe="1h",
+            action="sell",
+            order_id="test_123",
+            contracts=0.01,
+            close=50000.0,
+            position_side="short",
+            position_qty=0.01
+        )
+        assert alert.is_entry() is True
+        assert alert.is_exit() is False
+
+    def test_short_exit_signal(self):
+        """Test buy + flat = exit for short position."""
+        from app.models import TradingViewAlert
+
+        alert = TradingViewAlert(
+            timestamp="2026-01-20T10:00:00Z",
+            exchange="binance",
+            symbol="BTCUSDT",
+            timeframe="1h",
+            action="buy",
+            order_id="test_123",
+            contracts=0.0,
+            close=48000.0,
+            position_side="flat",
+            position_qty=0.0
+        )
+        assert alert.is_exit() is True
+        assert alert.is_entry() is False
+
+    def test_long_add_position(self):
+        """Test buy + long with existing position = add (not initial entry)."""
+        from app.models import TradingViewAlert
+
+        alert = TradingViewAlert(
+            timestamp="2026-01-20T10:00:00Z",
+            exchange="binance",
+            symbol="BTCUSDT",
+            timeframe="1h",
+            action="buy",
+            order_id="test_456",
+            contracts=0.01,
+            close=51000.0,
+            position_side="long",
+            position_qty=0.02  # Already has 0.02 position
+        )
+        # Adding to position is still entry
+        assert alert.is_entry() is True
+
+    def test_get_pair(self):
+        """Test get_pair method extracts base/quote correctly."""
+        from app.models import TradingViewAlert
+        from app.services.symbol_normalizer import parse_symbol
+
+        alert = TradingViewAlert(
+            timestamp="2026-01-20T10:00:00Z",
+            exchange="binance",
+            symbol="ETHUSDT",
+            timeframe="4h",
+            action="buy",
+            order_id="test_789",
+            contracts=0.5,
+            close=3000.0,
+            position_side="long",
+            position_qty=0.5
+        )
+
+        parsed = parse_symbol(alert.symbol)
+        assert parsed.base == "ETH"
+        assert parsed.quote == "USDT"
+
+
+class TestModelsValidation:
+    """Tests for model validation."""
+
+    def test_pyramid_entry_data(self):
+        """Test PyramidEntryData model."""
+        from app.models import PyramidEntryData
+
+        data = PyramidEntryData(
+            group_id="BTC_Binance_1h_001",
+            pyramid_index=0,
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            timeframe="1h",
+            entry_price=50000.0,
+            position_size=0.02,
+            capital_usdt=1000.0,
+            exchange_timestamp="2026-01-20T10:00:00Z",
+            received_timestamp=datetime.utcnow(),
+            total_pyramids=1
+        )
+
+        assert data.group_id == "BTC_Binance_1h_001"
+        assert data.pyramid_index == 0
+        assert data.entry_price == 50000.0
+
+    def test_trade_closed_data(self):
+        """Test TradeClosedData model."""
+        from app.models import TradeClosedData
+
+        data = TradeClosedData(
+            group_id="BTC_Binance_1h_001",
+            timeframe="1h",
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            pyramids=[{"index": 0, "entry_price": 50000.0, "size": 0.02}],
+            exit_price=51000.0,
+            exchange_timestamp="2026-01-20T12:00:00Z",
+            received_timestamp=datetime.utcnow(),
+            gross_pnl=20.0,
+            total_fees=2.0,
+            net_pnl=18.0,
+            net_pnl_percent=1.8
+        )
+
+        assert data.exit_price == 51000.0
+        assert data.net_pnl == 18.0
+
+    def test_equity_point(self):
+        """Test EquityPoint model."""
+        from app.models import EquityPoint
+
+        point = EquityPoint(
+            timestamp=datetime.utcnow(),
+            cumulative_pnl=150.0
+        )
+
+        assert point.cumulative_pnl == 150.0
+
+    def test_chart_stats(self):
+        """Test ChartStats model."""
+        from app.models import ChartStats
+
+        stats = ChartStats(
+            total_trades=10,
+            win_rate=65.0,
+            profit_factor=2.5,
+            max_drawdown=150.0
+        )
+
+        assert stats.total_trades == 10
+        assert stats.win_rate == 65.0
+        assert stats.profit_factor == 2.5
+
+    def test_trade_report_entry(self):
+        """Test TradeReportEntry model."""
+        from app.models import TradeReportEntry
+
+        entry = TradeReportEntry(
+            group_id="ETH_Bybit_4h_001",
+            exchange="bybit",
+            pair="ETH/USDT",
+            timeframe="4h",
+            pyramids_count=3,
+            pnl_usdt=250.50,
+            pnl_percent=8.35
+        )
+
+        assert entry.group_id == "ETH_Bybit_4h_001"
+        assert entry.pnl_usdt == 250.50
+
+
+class TestAppLifecycle:
+    """Tests for app lifecycle events."""
+
+    @pytest.mark.asyncio
+    async def test_startup_event(self):
+        """Test startup event initializes dependencies."""
+        with patch("app.main.db") as mock_db, \
+             patch("app.main.telegram_bot") as mock_bot, \
+             patch("app.main.report_service") as mock_report:
+
+            mock_db.connect = AsyncMock()
+            mock_bot.initialize = AsyncMock()
+            mock_bot.start = AsyncMock()
+            mock_report.start_scheduler = MagicMock()
+
+            from app.main import startup_event
+            await startup_event()
+
+            mock_db.connect.assert_called_once()
+            mock_bot.initialize.assert_called_once()
+            mock_bot.start.assert_called_once()
+            mock_report.start_scheduler.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_event(self):
+        """Test shutdown event cleans up dependencies."""
+        with patch("app.main.db") as mock_db, \
+             patch("app.main.telegram_bot") as mock_bot, \
+             patch("app.main.report_service") as mock_report:
+
+            mock_db.disconnect = AsyncMock()
+            mock_bot.stop = AsyncMock()
+            mock_report.stop_scheduler = MagicMock()
+
+            from app.main import shutdown_event
+            await shutdown_event()
+
+            mock_db.disconnect.assert_called_once()
+            mock_bot.stop.assert_called_once()
+            mock_report.stop_scheduler.assert_called_once()

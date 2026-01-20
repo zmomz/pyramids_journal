@@ -240,6 +240,19 @@ def mock_context():
 
 
 @pytest.fixture
+def mock_callback_query():
+    """Create a mock callback query for menu tests."""
+    query = MagicMock()
+    query.data = "menu_main"
+    query.message.chat_id = -1001234567890
+    query.message.chat = MagicMock(id=-1001234567890)
+    query.answer = AsyncMock()
+    query.edit_message_text = AsyncMock()
+    query.message.reply_text = AsyncMock()
+    return query
+
+
+@pytest.fixture
 def sample_equity_points():
     """Create sample equity points for chart testing."""
     from app.models import EquityPoint

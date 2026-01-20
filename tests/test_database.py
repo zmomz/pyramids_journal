@@ -570,3 +570,142 @@ class TestGetOpenTrade:
         trade = await populated_db.get_open_trade("bybit", "LINK", "USDT")
 
         assert trade is None
+
+
+class TestAlertIdempotency:
+    """Tests for alert idempotency methods."""
+
+    @pytest.mark.asyncio
+    async def test_is_alert_processed_false(self, test_db):
+        """Test that new alert is not processed."""
+        is_processed = await test_db.is_alert_processed("new_alert_id")
+        assert is_processed is False
+
+    @pytest.mark.asyncio
+    async def test_mark_alert_processed(self, test_db):
+        """Test marking an alert as processed."""
+        await test_db.mark_alert_processed("test_alert_1")
+
+        is_processed = await test_db.is_alert_processed("test_alert_1")
+        assert is_processed is True
+
+    @pytest.mark.asyncio
+    async def test_mark_alert_processed_idempotent(self, test_db):
+        """Test that marking same alert twice doesn't cause error."""
+        await test_db.mark_alert_processed("test_alert_2")
+        await test_db.mark_alert_processed("test_alert_2")  # Should not raise
+
+        is_processed = await test_db.is_alert_processed("test_alert_2")
+        assert is_processed is True
+
+
+class TestCreateTrade:
+    """Tests for create_trade method."""
+
+    @pytest.mark.asyncio
+    async def test_create_trade(self, test_db):
+        """Test creating a new trade."""
+        await test_db.create_trade("new_trade_1", "binance", "BTC", "USDT")
+
+        trade = await test_db.get_open_trade("binance", "BTC", "USDT")
+        assert trade is not None
+        assert trade["id"] == "new_trade_1"
+        assert trade["exchange"] == "binance"
+        assert trade["base"] == "BTC"
+        assert trade["quote"] == "USDT"
+        assert trade["status"] == "open"
+
+
+class TestCloseTrade:
+    """Tests for close_trade method."""
+
+    @pytest.mark.asyncio
+    async def test_close_trade(self, test_db):
+        """Test closing a trade."""
+        # First create a trade
+        await test_db.create_trade("trade_to_close", "binance", "ETH", "USDT")
+
+        # Close it
+        await test_db.close_trade("trade_to_close", 100.50, 5.25)
+
+        # Verify it's closed
+        trade = await test_db.get_open_trade("binance", "ETH", "USDT")
+        assert trade is None  # Should not find open trade
+
+        # Verify in database
+        cursor = await test_db.connection.execute(
+            "SELECT * FROM trades WHERE id = ?", ("trade_to_close",)
+        )
+        row = await cursor.fetchone()
+        assert row["status"] == "closed"
+        assert abs(row["total_pnl_usdt"] - 100.50) < 0.01
+        assert abs(row["total_pnl_percent"] - 5.25) < 0.01
+
+
+class TestGetTradeWithPyramids:
+    """Tests for get_trade_with_pyramids method."""
+
+    @pytest.mark.asyncio
+    async def test_get_trade_with_pyramids(self, populated_db):
+        """Test getting a trade with its pyramids."""
+        result = await populated_db.get_trade_with_pyramids("trade_1")
+
+        assert result is not None
+        assert "trade" in result
+        assert "pyramids" in result
+        assert "exit" in result
+        assert result["trade"]["id"] == "trade_1"
+        assert len(result["pyramids"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_trade_with_pyramids_not_found(self, populated_db):
+        """Test getting non-existent trade returns None."""
+        result = await populated_db.get_trade_with_pyramids("nonexistent")
+        assert result is None
+
+
+class TestConnectionProperty:
+    """Tests for connection property."""
+
+    @pytest.mark.asyncio
+    async def test_connection_raises_when_disconnected(self):
+        """Test that connection raises when not connected."""
+        from app.database import Database
+
+        db = Database(db_path=":memory:")
+        with pytest.raises(RuntimeError, match="not connected"):
+            _ = db.connection
+
+
+class TestTransaction:
+    """Tests for transaction context manager."""
+
+    @pytest.mark.asyncio
+    async def test_transaction_commits(self, test_db):
+        """Test that transaction commits on success."""
+        async with test_db.transaction():
+            await test_db.connection.execute(
+                "INSERT INTO processed_alerts (alert_id, processed_at) VALUES (?, ?)",
+                ("tx_test_1", "2026-01-20T12:00:00")
+            )
+
+        # Verify commit happened
+        is_processed = await test_db.is_alert_processed("tx_test_1")
+        assert is_processed is True
+
+    @pytest.mark.asyncio
+    async def test_transaction_rollback_on_error(self, test_db):
+        """Test that transaction rolls back on error."""
+        try:
+            async with test_db.transaction():
+                await test_db.connection.execute(
+                    "INSERT INTO processed_alerts (alert_id, processed_at) VALUES (?, ?)",
+                    ("tx_test_2", "2026-01-20T12:00:00")
+                )
+                raise Exception("Simulated error")
+        except Exception:
+            pass
+
+        # Verify rollback happened
+        is_processed = await test_db.is_alert_processed("tx_test_2")
+        assert is_processed is False

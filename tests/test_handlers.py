@@ -513,3 +513,343 @@ class TestErrorHandling:
 
                 call_args = mock_update.message.reply_text.call_args[0][0]
                 assert "Error" in call_args
+
+
+class TestCmdExchange:
+    """Tests for /exchange command."""
+
+    @pytest.mark.asyncio
+    async def test_exchange_all_time(self, mock_update, mock_context, populated_db):
+        """Test /exchange command for all-time."""
+        from app.bot.handlers import cmd_exchange
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_exchange(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Exchange Stats" in call_args
+
+    @pytest.mark.asyncio
+    async def test_exchange_today(self, mock_update, mock_context, populated_db):
+        """Test /exchange today command."""
+        from app.bot.handlers import cmd_exchange
+
+        mock_context.args = ["today"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_exchange(mock_update, mock_context)
+
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Today" in call_args
+
+
+class TestCmdLive:
+    """Tests for /live command."""
+
+    @pytest.mark.asyncio
+    async def test_live_no_positions(self, mock_update, mock_context, test_db):
+        """Test /live command with no open positions."""
+        from app.bot.handlers import cmd_live
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", test_db):
+                await cmd_live(mock_update, mock_context)
+
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "No open positions" in call_args
+
+
+class TestCmdReport:
+    """Tests for /report command."""
+
+    @pytest.mark.asyncio
+    async def test_report_invalid_period(self, mock_update, mock_context):
+        """Test /report with invalid period shows usage."""
+        from app.bot.handlers import cmd_report
+
+        mock_context.args = ["invalid_period"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_report(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Usage" in call_args
+
+
+class TestParseDateFilterEdgeCases:
+    """Additional tests for parse_date_filter edge cases."""
+
+    def test_invalid_date_format(self):
+        """Test that invalid date format returns all-time."""
+        from app.bot.handlers import parse_date_filter
+
+        start, end, label = parse_date_filter(["2026-13-45"])  # Invalid date
+
+        assert start is None
+        assert end is None
+        assert label == "All-Time"
+
+    def test_case_insensitive_period(self):
+        """Test that period is case insensitive."""
+        from app.bot.handlers import parse_date_filter
+
+        start1, _, label1 = parse_date_filter(["TODAY"])
+        start2, _, label2 = parse_date_filter(["Today"])
+        start3, _, label3 = parse_date_filter(["today"])
+
+        assert start1 == start2 == start3
+        assert "Today" in label1 and "Today" in label2 and "Today" in label3
+
+
+class TestBotNotSet:
+    """Tests for when _bot is None."""
+
+    @pytest.mark.asyncio
+    async def test_command_when_bot_none(self, mock_update, mock_context):
+        """Test that commands silently fail when _bot is None."""
+        from app.bot.handlers import cmd_ping
+
+        with patch("app.bot.handlers._bot", None):
+            await cmd_ping(mock_update, mock_context)
+
+            # Should not reply when bot is None
+            mock_update.message.reply_text.assert_not_called()
+
+
+class TestSetupHandlers:
+    """Tests for setup_handlers function."""
+
+    def test_setup_handlers_registers_commands(self):
+        """Test that setup_handlers registers all commands."""
+        from app.bot.handlers import setup_handlers
+
+        mock_app = MagicMock()
+        mock_bot = MagicMock()
+
+        setup_handlers(mock_app, mock_bot)
+
+        # Verify add_handler was called multiple times
+        assert mock_app.add_handler.call_count > 0
+
+
+class TestCmdBest:
+    """Tests for /best command."""
+
+    @pytest.mark.asyncio
+    async def test_best_all_time(self, mock_update, mock_context, populated_db):
+        """Test /best command for all-time."""
+        from app.bot.handlers import cmd_best
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_best(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Best" in call_args or "Top" in call_args
+
+    @pytest.mark.asyncio
+    async def test_best_today(self, mock_update, mock_context, populated_db):
+        """Test /best today command."""
+        from app.bot.handlers import cmd_best
+
+        mock_context.args = ["today"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_best(mock_update, mock_context)
+
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Today" in call_args
+
+
+class TestCmdWorst:
+    """Tests for /worst command."""
+
+    @pytest.mark.asyncio
+    async def test_worst_all_time(self, mock_update, mock_context, populated_db):
+        """Test /worst command for all-time."""
+        from app.bot.handlers import cmd_worst
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_worst(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Worst" in call_args or "Bottom" in call_args
+
+
+class TestCmdStreak:
+    """Tests for /streak command."""
+
+    @pytest.mark.asyncio
+    async def test_streak_all_time(self, mock_update, mock_context, populated_db):
+        """Test /streak command for all-time."""
+        from app.bot.handlers import cmd_streak
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_streak(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Streak" in call_args
+
+
+class TestCmdDrawdown:
+    """Tests for /drawdown command."""
+
+    @pytest.mark.asyncio
+    async def test_drawdown_all_time(self, mock_update, mock_context, populated_db):
+        """Test /drawdown command for all-time."""
+        from app.bot.handlers import cmd_drawdown
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_drawdown(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Drawdown" in call_args or "drawdown" in call_args
+
+
+class TestCmdTrades:
+    """Tests for /trades command."""
+
+    @pytest.mark.asyncio
+    async def test_trades_default_limit(self, mock_update, mock_context, populated_db):
+        """Test /trades command with default limit."""
+        from app.bot.handlers import cmd_trades
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_trades(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "Trade" in call_args or "trade" in call_args
+
+    @pytest.mark.asyncio
+    async def test_trades_with_limit(self, mock_update, mock_context, populated_db):
+        """Test /trades command with numeric limit."""
+        from app.bot.handlers import cmd_trades
+
+        mock_context.args = ["5"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_trades(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+
+
+class TestCmdHistory:
+    """Tests for /history command."""
+
+    @pytest.mark.asyncio
+    async def test_history_no_args_shows_usage(self, mock_update, mock_context):
+        """Test /history without args shows usage."""
+        from app.bot.handlers import cmd_history
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_history(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Usage" in call_args
+
+    @pytest.mark.asyncio
+    async def test_history_with_pair(self, mock_update, mock_context, populated_db):
+        """Test /history with pair argument."""
+        from app.bot.handlers import cmd_history
+
+        mock_context.args = ["BTC/USDT"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", populated_db):
+                await cmd_history(mock_update, mock_context)
+
+                mock_update.message.reply_text.assert_called_once()
+
+
+class TestCmdStatus:
+    """Tests for /status command."""
+
+    @pytest.mark.asyncio
+    async def test_status_no_open_trades(self, mock_update, mock_context, test_db):
+        """Test /status with no open trades."""
+        from app.bot.handlers import cmd_status
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            with patch("app.bot.handlers.db", test_db):
+                await cmd_status(mock_update, mock_context)
+
+                call_args = mock_update.message.reply_text.call_args[0][0]
+                assert "No open" in call_args or "no open" in call_args
+
+
+class TestCmdReset:
+    """Tests for /reset command."""
+
+    @pytest.mark.asyncio
+    async def test_reset_requires_confirmation(self, mock_update, mock_context):
+        """Test /reset without confirmation shows warning."""
+        from app.bot.handlers import cmd_reset
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_reset(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            # Should warn about confirmation
+            assert "CONFIRM" in call_args or "confirm" in call_args or "warning" in call_args.lower()
