@@ -248,13 +248,14 @@ class ReportService:
             chart_stats=chart_stats,
         )
 
-        # Save report to database
+        # Save report to database (exclude equity_points for JSON serialization)
+        # Use mode='json' to properly serialize datetime objects
         await db.save_daily_report(
             date=date,
             total_trades=total_trades_count,
             total_pyramids=total_pyramids,
             total_pnl_usdt=total_pnl_usdt,
-            report_json=json.dumps(report_data.model_dump()),
+            report_json=json.dumps(report_data.model_dump(mode='json')),
         )
 
         logger.info(
