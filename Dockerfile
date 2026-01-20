@@ -12,12 +12,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy requirements first for better caching
 COPY requirements.txt .
+COPY requirements-dev.txt .
 
 # Create virtual environment and install dependencies
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
+
+# Test stage - includes dev dependencies
+FROM builder AS test
+
+RUN pip install --no-cache-dir -r requirements-dev.txt
+
+COPY . .
+
+# Set test environment
+ENV TESTING=1
+ENV TELEGRAM_BOT_TOKEN=test_token
+ENV TELEGRAM_CHANNEL_ID=-1001234567890
+
+CMD ["pytest", "-v", "--tb=short"]
 
 # Production stage
 FROM python:3.12-slim

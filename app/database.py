@@ -476,6 +476,46 @@ class Database:
         row = await cursor.fetchone()
         return row["cumulative_pnl"] if row else 0.0
 
+    async def get_trade_counts_for_date(self, date: str) -> dict:
+        """
+        Get trade count breakdown for a specific date.
+
+        Returns:
+            Dict with:
+            - opened_today: Trades opened on this date
+            - closed_today: Trades closed on this date
+            - still_open: Trades opened before this date that are still open
+        """
+        # Trades opened today
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) as count FROM trades WHERE DATE(created_at) = ?",
+            (date,),
+        )
+        row = await cursor.fetchone()
+        opened_today = row["count"] if row else 0
+
+        # Trades closed today
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) as count FROM trades WHERE status = 'closed' AND DATE(closed_at) = ?",
+            (date,),
+        )
+        row = await cursor.fetchone()
+        closed_today = row["count"] if row else 0
+
+        # Trades still open (opened before today)
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) as count FROM trades WHERE status = 'open' AND DATE(created_at) < ?",
+            (date,),
+        )
+        row = await cursor.fetchone()
+        still_open = row["count"] if row else 0
+
+        return {
+            "opened_today": opened_today,
+            "closed_today": closed_today,
+            "still_open": still_open,
+        }
+
     # =========== Period-Based Query Methods ===========
 
     async def get_realized_pnl_for_period(

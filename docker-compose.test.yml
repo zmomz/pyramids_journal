@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    container_name: pyramids-journal-test
+    volumes:
+      # Mount source for live testing during development
+      - ./app:/app/app:ro
+      - ./tests:/app/tests:ro
+    environment:
+      - TESTING=1
+      - TELEGRAM_BOT_TOKEN=test_token
+      - TELEGRAM_CHANNEL_ID=-1001234567890
+    command: ["pytest", "-v", "--tb=short"]
+
+  # Run with coverage
+  test-coverage:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    container_name: pyramids-journal-test-cov
+    volumes:
+      - ./app:/app/app:ro
+      - ./tests:/app/tests:ro
+      - ./htmlcov:/app/htmlcov
+    environment:
+      - TESTING=1
+      - TELEGRAM_BOT_TOKEN=test_token
+      - TELEGRAM_CHANNEL_ID=-1001234567890
+    command: ["pytest", "--cov=app", "--cov-report=html", "--cov-report=term", "-v"]

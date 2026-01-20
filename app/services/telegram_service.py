@@ -418,7 +418,7 @@ class TelegramService:
         # Title in header (no overlap now)
         ax_header.text(0.18, 0.65, 'Equity Curve', transform=ax_header.transAxes,
                        fontsize=20, color='white', fontweight='bold', va='center')
-        ax_header.text(0.18, 0.25, f'Time vs Cumulative Net PnL (USDT) - {date}',
+        ax_header.text(0.18, 0.25, f"Today's PnL Progression (USDT) - {date}",
                        transform=ax_header.transAxes, fontsize=11, color='#888888', va='center')
 
         # Style the spines
@@ -432,7 +432,7 @@ class TelegramService:
 
         # Add final value annotation (only the last point)
         sign = '+' if final_pnl >= 0 else ''
-        annotation_text = f'Cumulative PnL: {sign}${final_pnl:,.2f}'
+        annotation_text = f"Today's PnL: {sign}${final_pnl:,.2f}"
 
         ax.annotate(
             annotation_text,
@@ -472,10 +472,12 @@ class TelegramService:
             border_color = '#404060'
 
             # Define stats data for two rows
+            # Trade counts: O=Opened today, C=Closed today, S=Still open from before
+            trade_counts_str = f"O:{chart_stats.trades_opened_today} C:{chart_stats.trades_closed_today} S:{chart_stats.trades_still_open}"
             row1_stats = [
-                ('Total Net PnL (USDT)', f'{"+$" if chart_stats.total_net_pnl >= 0 else "-$"}{abs(chart_stats.total_net_pnl):,.2f}'),
+                ("Today's PnL (USDT)", f'{"+$" if chart_stats.total_net_pnl >= 0 else "-$"}{abs(chart_stats.total_net_pnl):,.2f}'),
                 ('Max Drawdown (%)', f'{chart_stats.max_drawdown_percent:.2f}%'),
-                ('Number of Trades', f'{chart_stats.num_trades}'),
+                ('Trades (O/C/S)', trade_counts_str),
                 ('Win Rate (%)', f'{chart_stats.win_rate:.2f}%'),
             ]
             row2_stats = [

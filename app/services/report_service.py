@@ -75,6 +75,9 @@ class ReportService:
         """
         Generate daily report for a specific date.
 
+        Uses the same period-based database functions as other commands
+        (/pnl, /stats, /best, etc.) to ensure consistent results.
+
         Args:
             date: Date string (YYYY-MM-DD). Defaults to yesterday.
 
@@ -89,10 +92,12 @@ class ReportService:
 
         logger.info(f"Generating daily report for {date}")
 
-        # Get all closed trades for the date
-        trades = await db.get_trades_for_date(date)
+        # ====== USE SHARED PERIOD-BASED FUNCTIONS FOR CONSISTENCY ======
 
-        if not trades:
+        # Get statistics using the SAME function as /stats command
+        stats = await db.get_statistics_for_period(date, date)
+
+        if stats["total_trades"] == 0:
             logger.info(f"No trades found for {date}")
             return DailyReportData(
                 date=date,
@@ -106,14 +111,26 @@ class ReportService:
                 by_pair={},
             )
 
-        # Aggregate statistics
-        total_trades_count = len(trades)
-        total_pnl_usdt = 0.0
+        # Get PnL using the SAME function as /pnl command
+        total_pnl_usdt, total_trades_count = await db.get_realized_pnl_for_period(date, date)
+
+        # Get drawdown using the SAME function as /drawdown command
+        drawdown_data = await db.get_drawdown_for_period(date, date)
+
+        # Get exchange breakdown using the SAME function as /exchange command
+        exchange_stats = await db.get_exchange_stats_for_period(date, date)
+        by_exchange = {
+            row["exchange"]: {"pnl": row["pnl"], "trades": row["trades"]}
+            for row in exchange_stats
+        }
+
+        # Get trades using the SAME function as /trades command
+        trades = await db.get_trades_for_period(date, date, limit=1000)
+
+        # Build trade history and calculate pyramids/capital (report-specific)
         total_capital = 0.0
         total_pyramids = 0
-
         trade_history: list[TradeHistoryItem] = []
-        by_exchange: dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
         by_timeframe: dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
         by_pair: dict = defaultdict(float)
 
@@ -128,9 +145,8 @@ class ReportService:
 
             pnl = trade.get("total_pnl_usdt", 0) or 0
             pnl_percent = trade.get("total_pnl_percent", 0) or 0
-            total_pnl_usdt += pnl
 
-            # Get pyramids for this trade
+            # Get pyramids for this trade (report-specific detail)
             pyramids = await db.get_pyramids_for_trade(trade_id)
             pyramids_count = len(pyramids)
             total_pyramids += pyramids_count
@@ -149,15 +165,11 @@ class ReportService:
                 pnl_percent=pnl_percent,
             ))
 
-            # Aggregate by exchange
-            by_exchange[exchange]["pnl"] += pnl
-            by_exchange[exchange]["trades"] += 1
-
-            # Aggregate by timeframe
+            # Aggregate by timeframe (report-specific)
             by_timeframe[timeframe]["pnl"] += pnl
             by_timeframe[timeframe]["trades"] += 1
 
-            # Aggregate by pair
+            # Aggregate by pair (report-specific)
             by_pair[pair] += pnl
 
         # Calculate overall percentage
@@ -168,18 +180,17 @@ class ReportService:
         # Sort trade history by PnL (best first)
         trade_history.sort(key=lambda x: x.pnl_usdt, reverse=True)
 
-        # Build equity curve data points
-        # Start from cumulative PnL of all previous days
+        # Build equity curve data points (chart-specific)
         equity_points: list[EquityPoint] = []
-        previous_cumulative_pnl = 0.0
+        all_time_cumulative_pnl = 0.0
         if settings.equity_curve_enabled:
-            # Get cumulative realized PnL from all trades BEFORE this date
-            previous_cumulative_pnl = await db.get_cumulative_pnl_before_date(date)
+            # Get cumulative realized PnL from all trades BEFORE this date (for context)
+            all_time_cumulative_pnl = await db.get_cumulative_pnl_before_date(date)
 
             equity_data = await db.get_equity_curve_data(date)
-            cumulative_pnl = previous_cumulative_pnl  # Start from previous total
+            today_running_pnl = 0.0  # Start from $0 for today
             for row in equity_data:
-                cumulative_pnl += row.get("total_pnl_usdt", 0) or 0
+                today_running_pnl += row.get("total_pnl_usdt", 0) or 0
                 closed_at = row.get("closed_at")
                 if closed_at:
                     try:
@@ -189,59 +200,45 @@ class ReportService:
                             timestamp = closed_at
                         equity_points.append(EquityPoint(
                             timestamp=timestamp,
-                            cumulative_pnl=cumulative_pnl
+                            cumulative_pnl=today_running_pnl  # Today's running total only
                         ))
                     except (ValueError, TypeError):
                         pass
 
-        # Calculate chart statistics for footer
+        # Calculate chart statistics using values from shared functions
         chart_stats = None
         if settings.equity_curve_enabled and trade_history:
-            # Count wins and losses (for TODAY only)
-            wins = [t for t in trade_history if t.pnl_usdt > 0]
-            losses = [t for t in trade_history if t.pnl_usdt < 0]
-            num_wins = len(wins)
-            num_losses = len(losses)
+            # Use stats from get_statistics_for_period() - SAME as /stats command
+            win_rate = stats["win_rate"]
+            profit_factor = stats["profit_factor"]
 
-            # Win rate (for today)
-            win_rate = (num_wins / total_trades_count * 100) if total_trades_count > 0 else 0
-
-            # Profit factor (total wins / total losses) - for today
-            total_wins = sum(t.pnl_usdt for t in wins) if wins else 0
-            total_losses = abs(sum(t.pnl_usdt for t in losses)) if losses else 0
-            profit_factor = (total_wins / total_losses) if total_losses > 0 else total_wins
-
-            # Win/Loss ratio (avg win / avg loss) - for today
-            avg_win = (total_wins / num_wins) if num_wins > 0 else 0
-            avg_loss = (total_losses / num_losses) if num_losses > 0 else 0
+            # Win/Loss ratio from shared stats
+            avg_win = stats["avg_win"]
+            avg_loss = abs(stats["avg_loss"]) if stats["avg_loss"] else 0
             win_loss_ratio = (avg_win / avg_loss) if avg_loss > 0 else avg_win
 
-            # Max drawdown from equity curve (for today's session)
-            # Start peak from previous cumulative PnL, not 0
-            max_drawdown_usdt = 0.0
-            peak = previous_cumulative_pnl  # Start from previous day's ending balance
-            for point in equity_points:
-                if point.cumulative_pnl > peak:
-                    peak = point.cumulative_pnl
-                drawdown = peak - point.cumulative_pnl
-                if drawdown > max_drawdown_usdt:
-                    max_drawdown_usdt = drawdown
+            # Use drawdown from get_drawdown_for_period() - SAME as /drawdown command
+            max_drawdown_usdt = drawdown_data["max_drawdown"]
+            max_drawdown_percent = drawdown_data["max_drawdown_percent"]
 
-            # Calculate drawdown % relative to total capital deployed today
-            max_drawdown_percent = (max_drawdown_usdt / total_capital * 100) if total_capital > 0 else 0
+            # All-time cumulative PnL (for context at bottom of chart)
+            final_all_time_pnl = all_time_cumulative_pnl + total_pnl_usdt
 
-            # Final cumulative PnL (includes previous days)
-            final_cumulative_pnl = previous_cumulative_pnl + total_pnl_usdt
+            # Get trade counts breakdown (report-specific)
+            trade_counts = await db.get_trade_counts_for_date(date)
 
             chart_stats = ChartStats(
-                total_net_pnl=final_cumulative_pnl,  # Cumulative including previous days
+                total_net_pnl=total_pnl_usdt,  # TODAY's PnL only
                 max_drawdown_percent=max_drawdown_percent,
                 max_drawdown_usdt=max_drawdown_usdt,
-                num_trades=total_trades_count,
+                trades_opened_today=trade_counts["opened_today"],
+                trades_closed_today=trade_counts["closed_today"],
+                trades_still_open=trade_counts["still_open"],
                 win_rate=win_rate,
                 total_used_equity=total_capital,
                 profit_factor=profit_factor,
                 win_loss_ratio=win_loss_ratio,
+                cumulative_pnl=final_all_time_pnl,  # All-time for context
             )
 
         report_data = DailyReportData(
@@ -251,7 +248,7 @@ class ReportService:
             total_pnl_usdt=total_pnl_usdt,
             total_pnl_percent=total_pnl_percent,
             trades=trade_history,
-            by_exchange=dict(by_exchange),
+            by_exchange=by_exchange,
             by_timeframe=dict(by_timeframe),
             by_pair=dict(by_pair),
             equity_points=equity_points,

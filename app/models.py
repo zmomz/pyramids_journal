@@ -158,14 +158,18 @@ class EquityPoint(BaseModel):
 class ChartStats(BaseModel):
     """Statistics for equity curve chart footer."""
 
-    total_net_pnl: float = 0.0
+    total_net_pnl: float = 0.0  # Today's PnL only
     max_drawdown_percent: float = 0.0
     max_drawdown_usdt: float = 0.0
-    num_trades: int = 0
+    # Trade counts breakdown
+    trades_opened_today: int = 0  # Trades opened today
+    trades_closed_today: int = 0  # Trades closed today
+    trades_still_open: int = 0  # Trades opened before today, still open
     win_rate: float = 0.0
     total_used_equity: float = 0.0
     profit_factor: float = 0.0
     win_loss_ratio: float = 0.0
+    cumulative_pnl: float = 0.0  # All-time cumulative (for context line)
 
 
 class DailyReportData(BaseModel):
