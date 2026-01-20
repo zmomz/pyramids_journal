@@ -137,15 +137,39 @@ async def cmd_live(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @channel_only
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Generate performance report."""
+    """Generate performance report with equity curve chart.
+
+    Usage:
+        /report - Yesterday's daily report
+        /report today - Today's report (trades so far)
+        /report YYYY-MM-DD - Report for specific date
+        /report weekly - Last 7 days
+        /report monthly - Last 30 days
+    """
     from ..services.report_service import report_service
+    from ..services.telegram_service import telegram_service
 
     period = context.args[0] if context.args else "daily"
 
     try:
+        date = None
+        report = None
+
         if period == "daily":
             # Yesterday's report
             report = await report_service.generate_daily_report()
+            date = report.date
+        elif period == "today":
+            # Today's report
+            import pytz
+            tz = pytz.timezone(settings.timezone)
+            today = datetime.now(tz).strftime("%Y-%m-%d")
+            report = await report_service.generate_daily_report(today)
+            date = today
+        elif "-" in period and len(period) == 10:
+            # Specific date (YYYY-MM-DD format)
+            date = period
+            report = await report_service.generate_daily_report(date)
         elif period == "weekly":
             # Last 7 days
             report = await generate_period_report(7)
@@ -153,15 +177,27 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             # Last 30 days
             report = await generate_period_report(30)
         else:
-            await update.message.reply_text("Usage: /report [daily|weekly|monthly]")
+            await update.message.reply_text(
+                "Usage:\n"
+                "/report - Yesterday\n"
+                "/report today - Today's trades\n"
+                "/report 2026-01-20 - Specific date\n"
+                "/report weekly - Last 7 days\n"
+                "/report monthly - Last 30 days"
+            )
             return
 
-        message = formatters.format_report(report) if hasattr(formatters, 'format_report') else str(report)
+        # Send equity curve chart if available
+        if settings.equity_curve_enabled and report.equity_points and len(report.equity_points) >= 2:
+            chart_image = telegram_service.generate_equity_curve_image(
+                report.equity_points, report.date, report.chart_stats
+            )
+            if chart_image:
+                await update.message.reply_photo(photo=chart_image)
+                logger.info("Equity curve chart sent via /report command")
 
-        # Use telegram service format if available
-        from ..services.telegram_service import telegram_service
+        # Send the text report
         message = telegram_service.format_daily_report_message(report)
-
         await update.message.reply_text(message)
 
     except Exception as e:
