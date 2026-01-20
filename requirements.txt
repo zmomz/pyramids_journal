@@ -27,3 +27,6 @@ pytz>=2024.1
 
 # Utilities
 tenacity>=8.2.3
+
+# Charts
+matplotlib>=3.8.0

@@ -148,6 +148,26 @@ class TradeHistoryItem(BaseModel):
     pnl_percent: float
 
 
+class EquityPoint(BaseModel):
+    """Single point on equity curve."""
+
+    timestamp: datetime
+    cumulative_pnl: float
+
+
+class ChartStats(BaseModel):
+    """Statistics for equity curve chart footer."""
+
+    total_net_pnl: float = 0.0
+    max_drawdown_percent: float = 0.0
+    max_drawdown_usdt: float = 0.0
+    num_trades: int = 0
+    win_rate: float = 0.0
+    total_used_equity: float = 0.0
+    profit_factor: float = 0.0
+    win_loss_ratio: float = 0.0
+
+
 class DailyReportData(BaseModel):
     """Data for daily report."""
 
@@ -160,6 +180,8 @@ class DailyReportData(BaseModel):
     by_exchange: dict[str, dict]  # exchange -> {pnl, trades}
     by_timeframe: dict[str, dict]  # timeframe -> {pnl, trades}
     by_pair: dict[str, float]  # pair -> pnl
+    equity_points: list[EquityPoint] = []  # For equity curve chart
+    chart_stats: ChartStats | None = None  # Statistics for chart footer
 
 
 class ValidationError(BaseModel):

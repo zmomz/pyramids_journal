@@ -35,6 +35,7 @@ class Settings(BaseSettings):
 
     # Daily Report
     daily_report_time: str = Field(default="12:00")
+    equity_curve_enabled: bool = Field(default=True)
 
     # Webhook Security
     webhook_secret: str = Field(default="")

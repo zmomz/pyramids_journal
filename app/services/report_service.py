@@ -15,7 +15,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from ..config import settings
 from ..database import db
-from ..models import DailyReportData, TradeHistoryItem
+from ..models import DailyReportData, TradeHistoryItem, EquityPoint, ChartStats
 from .telegram_service import telegram_service
 
 logger = logging.getLogger(__name__)
@@ -168,6 +168,72 @@ class ReportService:
         # Sort trade history by PnL (best first)
         trade_history.sort(key=lambda x: x.pnl_usdt, reverse=True)
 
+        # Build equity curve data points
+        equity_points: list[EquityPoint] = []
+        if settings.equity_curve_enabled:
+            equity_data = await db.get_equity_curve_data(date)
+            cumulative_pnl = 0.0
+            for row in equity_data:
+                cumulative_pnl += row.get("total_pnl_usdt", 0) or 0
+                closed_at = row.get("closed_at")
+                if closed_at:
+                    try:
+                        if isinstance(closed_at, str):
+                            timestamp = datetime.fromisoformat(closed_at)
+                        else:
+                            timestamp = closed_at
+                        equity_points.append(EquityPoint(
+                            timestamp=timestamp,
+                            cumulative_pnl=cumulative_pnl
+                        ))
+                    except (ValueError, TypeError):
+                        pass
+
+        # Calculate chart statistics for footer
+        chart_stats = None
+        if settings.equity_curve_enabled and trade_history:
+            # Count wins and losses
+            wins = [t for t in trade_history if t.pnl_usdt > 0]
+            losses = [t for t in trade_history if t.pnl_usdt < 0]
+            num_wins = len(wins)
+            num_losses = len(losses)
+
+            # Win rate
+            win_rate = (num_wins / total_trades_count * 100) if total_trades_count > 0 else 0
+
+            # Profit factor (total wins / total losses)
+            total_wins = sum(t.pnl_usdt for t in wins) if wins else 0
+            total_losses = abs(sum(t.pnl_usdt for t in losses)) if losses else 0
+            profit_factor = (total_wins / total_losses) if total_losses > 0 else total_wins
+
+            # Win/Loss ratio (avg win / avg loss)
+            avg_win = (total_wins / num_wins) if num_wins > 0 else 0
+            avg_loss = (total_losses / num_losses) if num_losses > 0 else 0
+            win_loss_ratio = (avg_win / avg_loss) if avg_loss > 0 else avg_win
+
+            # Max drawdown from equity curve
+            max_drawdown_usdt = 0.0
+            max_drawdown_percent = 0.0
+            peak = 0.0
+            for point in equity_points:
+                if point.cumulative_pnl > peak:
+                    peak = point.cumulative_pnl
+                drawdown = peak - point.cumulative_pnl
+                if drawdown > max_drawdown_usdt:
+                    max_drawdown_usdt = drawdown
+                    max_drawdown_percent = (drawdown / peak * 100) if peak > 0 else 0
+
+            chart_stats = ChartStats(
+                total_net_pnl=total_pnl_usdt,
+                max_drawdown_percent=max_drawdown_percent,
+                max_drawdown_usdt=max_drawdown_usdt,
+                num_trades=total_trades_count,
+                win_rate=win_rate,
+                total_used_equity=total_capital,
+                profit_factor=profit_factor,
+                win_loss_ratio=win_loss_ratio,
+            )
+
         report_data = DailyReportData(
             date=date,
             total_trades=total_trades_count,
@@ -178,6 +244,8 @@ class ReportService:
             by_exchange=dict(by_exchange),
             by_timeframe=dict(by_timeframe),
             by_pair=dict(by_pair),
+            equity_points=equity_points,
+            chart_stats=chart_stats,
         )
 
         # Save report to database

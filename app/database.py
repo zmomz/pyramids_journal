@@ -443,6 +443,23 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def get_equity_curve_data(self, date: str) -> list[dict]:
+        """
+        Get equity curve data points for a specific date.
+        Returns trades ordered by close time with their PnL.
+        """
+        cursor = await self.connection.execute(
+            """
+            SELECT closed_at, total_pnl_usdt
+            FROM trades
+            WHERE status = 'closed' AND DATE(closed_at) = ?
+            ORDER BY closed_at ASC
+            """,
+            (date,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
     async def save_daily_report(
         self,
         date: str,
