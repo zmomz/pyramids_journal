@@ -543,9 +543,28 @@ class TelegramService:
 
         return buf
 
+    def _split_message(self, text: str, max_length: int = 4096) -> list[str]:
+        """Split a long message into chunks that fit Telegram's limit."""
+        if len(text) <= max_length:
+            return [text]
+
+        chunks = []
+        current_chunk = ""
+        for line in text.split('\n'):
+            if len(current_chunk) + len(line) + 1 > max_length:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                current_chunk = current_chunk + '\n' + line if current_chunk else line
+        if current_chunk:
+            chunks.append(current_chunk)
+        return chunks
+
     async def send_message(self, text: str) -> bool:
         """
         Send a message to the configured Telegram channel.
+        Automatically splits long messages into chunks.
 
         Args:
             text: Message text
@@ -558,11 +577,13 @@ class TelegramService:
             return False
 
         try:
-            await self.bot.send_message(
-                chat_id=settings.telegram_channel_id,
-                text=text,
-                parse_mode=None,  # Plain text for better formatting
-            )
+            chunks = self._split_message(text)
+            for chunk in chunks:
+                await self.bot.send_message(
+                    chat_id=settings.telegram_channel_id,
+                    text=chunk,
+                    parse_mode=None,  # Plain text for better formatting
+                )
             logger.info("Telegram message sent successfully")
             return True
         except TelegramError as e:
@@ -575,6 +596,7 @@ class TelegramService:
     async def send_to_signals_channel(self, text: str) -> bool:
         """
         Send a message to the signals-only channel.
+        Automatically splits long messages into chunks.
 
         Args:
             text: Message text
@@ -590,11 +612,13 @@ class TelegramService:
             return False
 
         try:
-            await self.bot.send_message(
-                chat_id=signals_channel_id,
-                text=text,
-                parse_mode=None,
-            )
+            chunks = self._split_message(text)
+            for chunk in chunks:
+                await self.bot.send_message(
+                    chat_id=signals_channel_id,
+                    text=chunk,
+                    parse_mode=None,
+                )
             logger.info("Telegram message sent to signals channel")
             return True
         except TelegramError as e:

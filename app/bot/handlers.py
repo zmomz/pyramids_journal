@@ -196,9 +196,26 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 await update.message.reply_photo(photo=chart_image)
                 logger.info("Equity curve chart sent via /report command")
 
-        # Send the text report
+        # Send the text report (handle long messages)
         message = telegram_service.format_daily_report_message(report)
-        await update.message.reply_text(message)
+
+        if len(message) <= 4096:
+            await update.message.reply_text(message)
+        else:
+            # Split message into chunks
+            chunks = []
+            current_chunk = ""
+            for line in message.split('\n'):
+                if len(current_chunk) + len(line) + 1 > 4096:
+                    chunks.append(current_chunk)
+                    current_chunk = line
+                else:
+                    current_chunk = current_chunk + '\n' + line if current_chunk else line
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            for chunk in chunks:
+                await update.message.reply_text(chunk)
 
     except Exception as e:
         logger.error(f"Error in /report: {e}")
