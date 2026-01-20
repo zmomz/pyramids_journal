@@ -302,6 +302,7 @@ async def generate_period_report(days: int):
     total_capital = 0.0
     total_pyramids = 0
     by_exchange = defaultdict(lambda: {"pnl": 0, "trades": 0})
+    by_timeframe = defaultdict(lambda: {"pnl": 0, "trades": 0})
     by_pair = defaultdict(float)
 
     for trade in trades:
@@ -313,6 +314,10 @@ async def generate_period_report(days: int):
         by_exchange[trade['exchange']]['pnl'] += trade['total_pnl_usdt'] or 0
         by_exchange[trade['exchange']]['trades'] += 1
 
+        timeframe = trade.get('timeframe') or 'unknown'
+        by_timeframe[timeframe]['pnl'] += trade['total_pnl_usdt'] or 0
+        by_timeframe[timeframe]['trades'] += 1
+
         pair = f"{trade['base']}/{trade['quote']}"
         by_pair[pair] += trade['total_pnl_usdt'] or 0
 
@@ -323,6 +328,7 @@ async def generate_period_report(days: int):
         total_pnl_usdt=total_pnl,
         total_pnl_percent=(total_pnl / total_capital * 100) if total_capital > 0 else 0,
         by_exchange=dict(by_exchange),
+        by_timeframe=dict(by_timeframe),
         by_pair=dict(by_pair),
     )
 
