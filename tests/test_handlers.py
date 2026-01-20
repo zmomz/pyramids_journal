@@ -735,3 +735,747 @@ class TestCmdReset:
             call_args = mock_update.message.reply_text.call_args[0][0]
             # Should warn about confirmation
             assert "CONFIRM" in call_args or "confirm" in call_args or "warning" in call_args.lower()
+
+    @pytest.mark.asyncio
+    async def test_reset_trades_without_confirm(self, mock_update, mock_context):
+        """Test /reset trades without CONFIRM shows warning."""
+        from app.bot.handlers import cmd_reset
+
+        mock_context.args = ["trades"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_reset(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "CONFIRM" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reset_trades_confirmed(self, mock_update, mock_context):
+        """Test /reset trades CONFIRM executes reset."""
+        from app.bot.handlers import cmd_reset
+
+        mock_context.args = ["trades", "CONFIRM"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.reset_trades = AsyncMock(return_value={"trades": 5, "pyramids": 10, "exits": 5})
+
+            await cmd_reset(mock_update, mock_context)
+
+            mock_db.reset_trades.assert_called_once()
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Cleared" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reset_settings_confirmed(self, mock_update, mock_context):
+        """Test /reset settings CONFIRM executes reset."""
+        from app.bot.handlers import cmd_reset
+
+        mock_context.args = ["settings", "CONFIRM"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.reset_settings = AsyncMock(return_value={"settings": 3})
+
+            await cmd_reset(mock_update, mock_context)
+
+            mock_db.reset_settings.assert_called_once()
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Cleared" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reset_cache_confirmed(self, mock_update, mock_context):
+        """Test /reset cache CONFIRM executes reset."""
+        from app.bot.handlers import cmd_reset
+
+        mock_context.args = ["cache", "CONFIRM"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.reset_cache = AsyncMock(return_value={"symbol_rules": 10, "daily_reports": 5})
+
+            await cmd_reset(mock_update, mock_context)
+
+            mock_db.reset_cache.assert_called_once()
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Cleared" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reset_all_confirmed(self, mock_update, mock_context):
+        """Test /reset all CONFIRM executes full reset."""
+        from app.bot.handlers import cmd_reset
+
+        mock_context.args = ["all", "CONFIRM"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.reset_all = AsyncMock(return_value={
+                "trades": 5, "pyramids": 10, "exits": 5,
+                "settings": 3, "symbol_rules": 10, "daily_reports": 5
+            })
+
+            await cmd_reset(mock_update, mock_context)
+
+            mock_db.reset_all.assert_called_once()
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Full Database Reset" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reset_invalid_type(self, mock_update, mock_context):
+        """Test /reset with invalid type shows error."""
+        from app.bot.handlers import cmd_reset
+
+        mock_context.args = ["invalid_type", "CONFIRM"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_reset(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Unknown reset type" in call_args
+
+
+class TestCmdSetfee:
+    """Tests for /setfee command."""
+
+    @pytest.mark.asyncio
+    async def test_setfee_no_args_shows_usage(self, mock_update, mock_context):
+        """Test /setfee without args shows usage."""
+        from app.bot.handlers import cmd_setfee
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_setfee(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Usage" in call_args
+
+    @pytest.mark.asyncio
+    async def test_setfee_success(self, mock_update, mock_context):
+        """Test /setfee successfully sets fee."""
+        from app.bot.handlers import cmd_setfee
+
+        mock_context.args = ["binance", "0.1"]
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_setfee(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Updated" in call_args
+            assert "binance" in call_args
+            assert "0.1" in call_args
+
+    @pytest.mark.asyncio
+    async def test_setfee_unknown_exchange(self, mock_update, mock_context):
+        """Test /setfee with unknown exchange shows error."""
+        from app.bot.handlers import cmd_setfee
+
+        mock_context.args = ["unknown_exchange", "0.1"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_setfee(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Unknown exchange" in call_args
+
+    @pytest.mark.asyncio
+    async def test_setfee_invalid_rate(self, mock_update, mock_context):
+        """Test /setfee with invalid rate shows error."""
+        from app.bot.handlers import cmd_setfee
+
+        mock_context.args = ["binance", "invalid"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_setfee(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Invalid rate" in call_args
+
+
+class TestCmdTimezone:
+    """Tests for /timezone command."""
+
+    @pytest.mark.asyncio
+    async def test_timezone_no_args_shows_current(self, mock_update, mock_context):
+        """Test /timezone without args shows current timezone."""
+        from app.bot.handlers import cmd_timezone
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.settings") as mock_settings:
+            mock_bot.is_valid_chat.return_value = True
+            mock_settings.timezone = "UTC"
+
+            await cmd_timezone(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "UTC" in call_args
+
+    @pytest.mark.asyncio
+    async def test_timezone_set_valid(self, mock_update, mock_context):
+        """Test /timezone sets valid timezone."""
+        from app.bot.handlers import cmd_timezone
+
+        mock_context.args = ["America/New_York"]
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_timezone(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "America/New_York" in call_args
+
+    @pytest.mark.asyncio
+    async def test_timezone_set_invalid(self, mock_update, mock_context):
+        """Test /timezone with invalid timezone shows error."""
+        from app.bot.handlers import cmd_timezone
+
+        mock_context.args = ["Invalid/Timezone"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_timezone(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Invalid timezone" in call_args
+
+
+class TestCmdReporttime:
+    """Tests for /reporttime command."""
+
+    @pytest.mark.asyncio
+    async def test_reporttime_no_args_shows_current(self, mock_update, mock_context):
+        """Test /reporttime without args shows current time."""
+        from app.bot.handlers import cmd_reporttime
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.settings") as mock_settings:
+            mock_bot.is_valid_chat.return_value = True
+            mock_settings.daily_report_time = "12:00"
+
+            await cmd_reporttime(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "12:00" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reporttime_set_valid(self, mock_update, mock_context):
+        """Test /reporttime sets valid time."""
+        from app.bot.handlers import cmd_reporttime
+
+        mock_context.args = ["14:30"]
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_reporttime(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "14:30" in call_args
+
+    @pytest.mark.asyncio
+    async def test_reporttime_set_invalid(self, mock_update, mock_context):
+        """Test /reporttime with invalid format shows error."""
+        from app.bot.handlers import cmd_reporttime
+
+        mock_context.args = ["invalid_time"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_reporttime(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Invalid format" in call_args
+
+
+class TestCmdPauseResume:
+    """Tests for /pause and /resume commands."""
+
+    @pytest.mark.asyncio
+    async def test_pause_command(self, mock_update, mock_context):
+        """Test /pause command sets paused state."""
+        from app.bot.handlers import cmd_pause
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_pause(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "paused" in call_args.lower()
+
+    @pytest.mark.asyncio
+    async def test_resume_command(self, mock_update, mock_context):
+        """Test /resume command clears paused state."""
+        from app.bot.handlers import cmd_resume
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_resume(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "resumed" in call_args.lower()
+
+
+class TestCmdIgnoreUnignore:
+    """Tests for /ignore and /unignore commands."""
+
+    @pytest.mark.asyncio
+    async def test_ignore_no_args_shows_usage(self, mock_update, mock_context):
+        """Test /ignore without args shows usage."""
+        from app.bot.handlers import cmd_ignore
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_ignore(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Usage" in call_args
+
+    @pytest.mark.asyncio
+    async def test_ignore_pair(self, mock_update, mock_context):
+        """Test /ignore adds pair to ignore list."""
+        from app.bot.handlers import cmd_ignore
+
+        mock_context.args = ["BTC/USDT"]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_ignore(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "ignoring" in call_args.lower()
+            assert "BTC/USDT" in call_args
+
+    @pytest.mark.asyncio
+    async def test_unignore_no_args_shows_usage(self, mock_update, mock_context):
+        """Test /unignore without args shows usage."""
+        from app.bot.handlers import cmd_unignore
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_unignore(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Usage" in call_args
+
+    @pytest.mark.asyncio
+    async def test_unignore_pair(self, mock_update, mock_context):
+        """Test /unignore removes pair from ignore list."""
+        from app.bot.handlers import cmd_unignore
+
+        mock_context.args = ["BTC/USDT"]
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value={"value": "BTC/USDT,ETH/USDT"})
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_unignore(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Resumed" in call_args
+            assert "BTC/USDT" in call_args
+
+
+class TestCmdSetCapital:
+    """Tests for /set_capital command."""
+
+    @pytest.mark.asyncio
+    async def test_set_capital_no_args_shows_settings(self, mock_update, mock_context):
+        """Test /set_capital without args shows current settings."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.get_all_pyramid_capitals = AsyncMock(return_value={})
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "capital" in call_args.lower() or "Usage" in call_args
+
+    @pytest.mark.asyncio
+    async def test_set_capital_with_existing_settings(self, mock_update, mock_context):
+        """Test /set_capital shows existing settings."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = []
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.get_all_pyramid_capitals = AsyncMock(return_value={
+                "binance:BTC:USDT:1h:0": 500.0,
+                "binance:ETH:USDT:4h:0": 1000.0
+            })
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Capital Settings" in call_args
+
+    @pytest.mark.asyncio
+    async def test_set_capital_clear_all(self, mock_update, mock_context):
+        """Test /set_capital clear removes all settings."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = ["clear"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.clear_all_pyramid_capitals = AsyncMock()
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            mock_db.clear_all_pyramid_capitals.assert_called_once()
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "cleared" in call_args.lower()
+
+    @pytest.mark.asyncio
+    async def test_set_capital_missing_args(self, mock_update, mock_context):
+        """Test /set_capital with insufficient args shows error."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = ["binance", "BTC/USDT"]  # Missing timeframe, index, amount
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Missing arguments" in call_args
+
+    @pytest.mark.asyncio
+    async def test_set_capital_full_args(self, mock_update, mock_context):
+        """Test /set_capital with all args sets capital."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = ["binance", "BTC/USDT", "1h", "0", "500"]
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.set_pyramid_capital = AsyncMock(return_value="binance:BTC:USDT:1h:0")
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Capital set" in call_args
+            assert "500" in call_args
+
+    @pytest.mark.asyncio
+    async def test_set_capital_negative_index(self, mock_update, mock_context):
+        """Test /set_capital with negative index shows error."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = ["binance", "BTC/USDT", "1h", "-1", "500"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "must be 0 or greater" in call_args
+
+    @pytest.mark.asyncio
+    async def test_set_capital_negative_value(self, mock_update, mock_context):
+        """Test /set_capital with negative capital shows error."""
+        from app.bot.handlers import cmd_set_capital
+
+        mock_context.args = ["binance", "BTC/USDT", "1h", "0", "-100"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_set_capital(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "must be positive" in call_args
+
+
+class TestCmdSignalsChannel:
+    """Tests for /signals_channel command."""
+
+    @pytest.mark.asyncio
+    async def test_signals_channel_no_args_shows_current(self, mock_update, mock_context):
+        """Test /signals_channel without args shows current setting."""
+        from app.bot.handlers import cmd_signals_channel
+
+        mock_context.args = []
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value={"value": "-1001234567890"})
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_signals_channel(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "-1001234567890" in call_args
+
+    @pytest.mark.asyncio
+    async def test_signals_channel_not_configured(self, mock_update, mock_context):
+        """Test /signals_channel shows help when not configured."""
+        from app.bot.handlers import cmd_signals_channel
+
+        mock_context.args = []
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db, \
+             patch("app.bot.handlers.settings") as mock_settings:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+            mock_settings.telegram_signals_channel_id = None
+
+            await cmd_signals_channel(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "No signals channel" in call_args
+
+    @pytest.mark.asyncio
+    async def test_signals_channel_disable(self, mock_update, mock_context):
+        """Test /signals_channel off disables the channel."""
+        from app.bot.handlers import cmd_signals_channel
+
+        mock_context.args = ["off"]
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock()
+        mock_connection.commit = AsyncMock()
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_signals_channel(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "disabled" in call_args.lower()
+
+    @pytest.mark.asyncio
+    async def test_signals_channel_invalid_id(self, mock_update, mock_context):
+        """Test /signals_channel with invalid ID shows error."""
+        from app.bot.handlers import cmd_signals_channel
+
+        mock_context.args = ["not_a_channel_id"]
+
+        with patch("app.bot.handlers._bot") as mock_bot:
+            mock_bot.is_valid_chat.return_value = True
+
+            await cmd_signals_channel(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "Invalid channel ID" in call_args
+
+
+class TestGeneratePeriodReport:
+    """Tests for generate_period_report function."""
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_7_days(self):
+        """Test generating 7-day period report."""
+        from app.bot.handlers import generate_period_report
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=[])
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
+
+            report = await generate_period_report(7)
+
+            assert report.date == "Last 7 days"
+            assert report.total_trades == 0
+
+    @pytest.mark.asyncio
+    async def test_generate_period_report_30_days(self):
+        """Test generating 30-day period report."""
+        from app.bot.handlers import generate_period_report
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=[])
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers.db") as mock_db:
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
+
+            report = await generate_period_report(30)
+
+            assert report.date == "Last 30 days"
+
+
+class TestCmdExportNoTrades:
+    """Tests for /export with no trades."""
+
+    @pytest.mark.asyncio
+    async def test_export_no_trades(self, mock_update, mock_context):
+        """Test /export with no trades shows message."""
+        from app.bot.handlers import cmd_export
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=[])
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+
+            await cmd_export(mock_update, mock_context)
+
+            call_args = mock_update.message.reply_text.call_args[0][0]
+            assert "No trades" in call_args
+
+
+class TestCmdStatusLongMessage:
+    """Tests for /status with long messages."""
+
+    @pytest.mark.asyncio
+    async def test_status_splits_long_message(self, mock_update, mock_context):
+        """Test /status splits message when too long."""
+        from app.bot.handlers import cmd_status
+
+        # Create many open trades to generate a long message
+        many_trades = []
+        for i in range(20):
+            many_trades.append({
+                "id": f"trade_{i}",
+                "exchange": "binance",
+                "base": "BTC",
+                "quote": "USDT",
+                "group_id": f"BTC_Binance_1h_{i:03d}",
+                "timeframe": "1h"
+            })
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall = AsyncMock(return_value=many_trades)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db, \
+             patch("app.bot.handlers.exchange_service") as mock_exchange, \
+             patch("app.bot.handlers.formatters") as mock_formatters:
+            mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {"entry_price": 50000.0, "position_size": 0.02}
+            ])
+
+            mock_price = MagicMock()
+            mock_price.price = 51000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            # Generate a very long message
+            mock_formatters.format_status.return_value = "x" * 5000
+
+            await cmd_status(mock_update, mock_context)
+
+            # Should have called reply_text multiple times for chunked message
+            assert mock_update.message.reply_text.call_count >= 1

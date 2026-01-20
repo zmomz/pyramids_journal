@@ -912,3 +912,807 @@ class TestDailyReportEdgeCases:
 
         assert "Daily Report" in message
         assert "Total Trades: 3" in message
+
+
+class TestSplitMessage:
+    """Tests for _split_message method."""
+
+    def test_split_message_short_text(self):
+        """Test that short messages are returned as single chunk."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        text = "Short message"
+        chunks = service._split_message(text)
+
+        assert len(chunks) == 1
+        assert chunks[0] == text
+
+    def test_split_message_long_text(self):
+        """Test that long messages are split into chunks."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        # Create a message longer than 4096 chars
+        lines = [f"Line {i}: " + "x" * 100 for i in range(50)]
+        text = "\n".join(lines)
+
+        chunks = service._split_message(text)
+
+        assert len(chunks) > 1
+        for chunk in chunks:
+            assert len(chunk) <= 4096
+
+    def test_split_message_custom_limit(self):
+        """Test splitting with custom max length."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        text = "Line 1\nLine 2\nLine 3\nLine 4"
+        chunks = service._split_message(text, max_length=15)
+
+        assert len(chunks) > 1
+
+    def test_split_message_preserves_content(self):
+        """Test that split message preserves all content."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        lines = [f"Line {i}" for i in range(10)]
+        text = "\n".join(lines)
+        chunks = service._split_message(text, max_length=30)
+
+        # All original lines should be present
+        rejoined = "\n".join(chunks)
+        for line in lines:
+            assert line in rejoined
+
+
+class TestSendMessage:
+    """Tests for send_message method."""
+
+    @pytest.mark.asyncio
+    async def test_send_message_success(self):
+        """Test successful message sending."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+
+            service._bot = mock_bot
+
+            result = await service.send_message("Test message")
+
+            assert result is True
+            mock_bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_message_disabled(self):
+        """Test message sending when Telegram is disabled."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = False
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+
+            result = await service.send_message("Test message")
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_message_telegram_error(self):
+        """Test message sending with TelegramError."""
+        from app.services.telegram_service import TelegramService
+        from telegram.error import TelegramError
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock(side_effect=TelegramError("API error"))
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+
+            service._bot = mock_bot
+
+            result = await service.send_message("Test message")
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_message_unexpected_error(self):
+        """Test message sending with unexpected exception."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock(side_effect=Exception("Unexpected error"))
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+
+            service._bot = mock_bot
+
+            result = await service.send_message("Test message")
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_message_splits_long_text(self):
+        """Test that long messages are split and sent in chunks."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+
+            service._bot = mock_bot
+
+            # Create a very long message
+            long_text = "\n".join([f"Line {i}: " + "x" * 100 for i in range(50)])
+
+            result = await service.send_message(long_text)
+
+            assert result is True
+            # Should have made multiple calls for chunks
+            assert mock_bot.send_message.call_count > 1
+
+
+class TestSendToSignalsChannel:
+    """Tests for send_to_signals_channel method."""
+
+    @pytest.mark.asyncio
+    async def test_send_to_signals_channel_success(self):
+        """Test successful sending to signals channel."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "get_signals_channel_id", new_callable=AsyncMock) as mock_get_channel:
+
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_get_channel.return_value = "-1009876543210"
+
+            service._bot = mock_bot
+
+            result = await service.send_to_signals_channel("Test signal")
+
+            assert result is True
+            mock_bot.send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_to_signals_channel_disabled(self):
+        """Test sending when signals channel is disabled."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = False
+            mock_settings.telegram_bot_token = ""
+
+            result = await service.send_to_signals_channel("Test signal")
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_to_signals_channel_no_channel_id(self):
+        """Test sending when signals channel ID is not set."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "get_signals_channel_id", new_callable=AsyncMock) as mock_get_channel:
+
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_get_channel.return_value = None
+
+            result = await service.send_to_signals_channel("Test signal")
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_to_signals_channel_telegram_error(self):
+        """Test sending to signals channel with TelegramError."""
+        from app.services.telegram_service import TelegramService
+        from telegram.error import TelegramError
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock(side_effect=TelegramError("API error"))
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "get_signals_channel_id", new_callable=AsyncMock) as mock_get_channel:
+
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_get_channel.return_value = "-1009876543210"
+
+            service._bot = mock_bot
+
+            result = await service.send_to_signals_channel("Test signal")
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_to_signals_channel_unexpected_error(self):
+        """Test sending to signals channel with unexpected exception."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_message = AsyncMock(side_effect=Exception("Unexpected"))
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "get_signals_channel_id", new_callable=AsyncMock) as mock_get_channel:
+
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_get_channel.return_value = "-1009876543210"
+
+            service._bot = mock_bot
+
+            result = await service.send_to_signals_channel("Test signal")
+
+            assert result is False
+
+
+class TestSendSignalMessage:
+    """Tests for send_signal_message method."""
+
+    @pytest.mark.asyncio
+    async def test_send_signal_message_both_succeed(self):
+        """Test signal message sent to both channels successfully."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch.object(service, "send_message", new_callable=AsyncMock) as mock_main, \
+             patch.object(service, "send_to_signals_channel", new_callable=AsyncMock) as mock_signals:
+
+            mock_main.return_value = True
+            mock_signals.return_value = True
+
+            result = await service.send_signal_message("Test signal")
+
+            assert result is True
+            mock_main.assert_called_once_with("Test signal")
+            mock_signals.assert_called_once_with("Test signal")
+
+    @pytest.mark.asyncio
+    async def test_send_signal_message_main_only(self):
+        """Test signal message when only main channel succeeds."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch.object(service, "send_message", new_callable=AsyncMock) as mock_main, \
+             patch.object(service, "send_to_signals_channel", new_callable=AsyncMock) as mock_signals:
+
+            mock_main.return_value = True
+            mock_signals.return_value = False
+
+            result = await service.send_signal_message("Test signal")
+
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_send_signal_message_signals_only(self):
+        """Test signal message when only signals channel succeeds."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch.object(service, "send_message", new_callable=AsyncMock) as mock_main, \
+             patch.object(service, "send_to_signals_channel", new_callable=AsyncMock) as mock_signals:
+
+            mock_main.return_value = False
+            mock_signals.return_value = True
+
+            result = await service.send_signal_message("Test signal")
+
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_send_signal_message_both_fail(self):
+        """Test signal message when both channels fail."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch.object(service, "send_message", new_callable=AsyncMock) as mock_main, \
+             patch.object(service, "send_to_signals_channel", new_callable=AsyncMock) as mock_signals:
+
+            mock_main.return_value = False
+            mock_signals.return_value = False
+
+            result = await service.send_signal_message("Test signal")
+
+            assert result is False
+
+
+class TestSendTradeClosed:
+    """Tests for send_trade_closed method."""
+
+    @pytest.mark.asyncio
+    async def test_send_trade_closed_success(self):
+        """Test successful trade closed notification."""
+        from app.services.telegram_service import TelegramService
+        from app.models import TradeClosedData
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "send_signal_message", new_callable=AsyncMock) as mock_send:
+
+            mock_settings.timezone = "UTC"
+            mock_send.return_value = True
+
+            data = TradeClosedData(
+                trade_id="trade_001",
+                group_id="BTC_Binance_1h_001",
+                timeframe="1h",
+                exchange="binance",
+                base="BTC",
+                quote="USDT",
+                pyramids=[{"index": 0, "entry_price": 50000.0, "size": 0.02, "entry_time": "2026-01-20T10:00:00Z"}],
+                exit_price=51000.0,
+                exit_time=datetime.now(UTC),
+                exchange_timestamp="2026-01-20T12:00:00Z",
+                received_timestamp=datetime.now(UTC),
+                gross_pnl=20.0,
+                total_fees=2.0,
+                net_pnl=18.0,
+                net_pnl_percent=1.8
+            )
+
+            result = await service.send_trade_closed(data)
+
+            assert result is True
+            mock_send.assert_called_once()
+            call_arg = mock_send.call_args[0][0]
+            assert "Trade Closed" in call_arg
+
+
+class TestSendPyramidEntry:
+    """Tests for send_pyramid_entry method."""
+
+    @pytest.mark.asyncio
+    async def test_send_pyramid_entry_success(self):
+        """Test successful pyramid entry notification."""
+        from app.services.telegram_service import TelegramService
+        from app.models import PyramidEntryData
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "send_signal_message", new_callable=AsyncMock) as mock_send:
+
+            mock_settings.timezone = "UTC"
+            mock_send.return_value = True
+
+            data = PyramidEntryData(
+                group_id="BTC_Binance_1h_001",
+                pyramid_index=0,
+                exchange="binance",
+                base="BTC",
+                quote="USDT",
+                timeframe="1h",
+                entry_price=50000.0,
+                position_size=0.02,
+                capital_usdt=1000.0,
+                exchange_timestamp="2026-01-20T10:00:00Z",
+                received_timestamp=datetime.now(UTC),
+                total_pyramids=1
+            )
+
+            result = await service.send_pyramid_entry(data)
+
+            assert result is True
+            mock_send.assert_called_once()
+            call_arg = mock_send.call_args[0][0]
+            assert "Trade Entry" in call_arg
+
+
+class TestSendPhotoToChannel:
+    """Tests for send_photo_to_channel method."""
+
+    @pytest.mark.asyncio
+    async def test_send_photo_success(self):
+        """Test successful photo sending."""
+        import io
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_photo = AsyncMock()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+
+            service._bot = mock_bot
+
+            photo = io.BytesIO(b"fake image data")
+            result = await service.send_photo_to_channel(photo, caption="Test caption")
+
+            assert result is True
+            mock_bot.send_photo.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_photo_disabled(self):
+        """Test photo sending when Telegram is disabled."""
+        import io
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = False
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+
+            photo = io.BytesIO(b"fake image data")
+            result = await service.send_photo_to_channel(photo)
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_photo_telegram_error(self):
+        """Test photo sending with TelegramError."""
+        import io
+        from app.services.telegram_service import TelegramService
+        from telegram.error import TelegramError
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_photo = AsyncMock(side_effect=TelegramError("API error"))
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+
+            service._bot = mock_bot
+
+            photo = io.BytesIO(b"fake image data")
+            result = await service.send_photo_to_channel(photo)
+
+            assert result is False
+
+
+class TestSendPhotoToSignalsChannel:
+    """Tests for send_photo_to_signals_channel method."""
+
+    @pytest.mark.asyncio
+    async def test_send_photo_to_signals_success(self):
+        """Test successful photo sending to signals channel."""
+        import io
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_photo = AsyncMock()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "get_signals_channel_id", new_callable=AsyncMock) as mock_get_channel:
+
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_get_channel.return_value = "-1009876543210"
+
+            service._bot = mock_bot
+
+            photo = io.BytesIO(b"fake image data")
+            result = await service.send_photo_to_signals_channel(photo, caption="Test")
+
+            assert result is True
+            mock_bot.send_photo.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_photo_to_signals_disabled(self):
+        """Test photo sending when signals channel is disabled."""
+        import io
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings:
+            mock_settings.telegram_enabled = False
+            mock_settings.telegram_bot_token = ""
+
+            photo = io.BytesIO(b"fake image data")
+            result = await service.send_photo_to_signals_channel(photo)
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_photo_to_signals_no_channel_id(self):
+        """Test photo sending when signals channel ID is not set."""
+        import io
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "get_signals_channel_id", new_callable=AsyncMock) as mock_get_channel:
+
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_get_channel.return_value = None
+
+            photo = io.BytesIO(b"fake image data")
+            result = await service.send_photo_to_signals_channel(photo)
+
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_photo_to_signals_telegram_error(self):
+        """Test photo sending to signals channel with TelegramError."""
+        import io
+        from app.services.telegram_service import TelegramService
+        from telegram.error import TelegramError
+
+        service = TelegramService()
+        mock_bot = MagicMock()
+        mock_bot.send_photo = AsyncMock(side_effect=TelegramError("API error"))
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "get_signals_channel_id", new_callable=AsyncMock) as mock_get_channel:
+
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_get_channel.return_value = "-1009876543210"
+
+            service._bot = mock_bot
+
+            photo = io.BytesIO(b"fake image data")
+            result = await service.send_photo_to_signals_channel(photo)
+
+            assert result is False
+
+
+class TestSendDailyReport:
+    """Tests for send_daily_report method."""
+
+    @pytest.mark.asyncio
+    async def test_send_daily_report_without_equity_curve(self):
+        """Test sending daily report without equity curve."""
+        from app.services.telegram_service import TelegramService
+        from app.models import DailyReportData
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "send_signal_message", new_callable=AsyncMock) as mock_send:
+
+            mock_settings.timezone = "UTC"
+            mock_settings.equity_curve_enabled = False
+            mock_send.return_value = True
+
+            data = DailyReportData(
+                date="2026-01-20",
+                total_trades=5,
+                total_pyramids=8,
+                total_pnl_usdt=150.0,
+                total_pnl_percent=5.0,
+                trades=[],
+                by_exchange={},
+                by_timeframe={},
+                by_pair={}
+            )
+
+            result = await service.send_daily_report(data)
+
+            assert result is True
+            mock_send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_daily_report_with_equity_curve(self):
+        """Test sending daily report with equity curve enabled."""
+        import io
+        from app.services.telegram_service import TelegramService
+        from app.models import DailyReportData, EquityPoint
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "send_signal_message", new_callable=AsyncMock) as mock_send, \
+             patch.object(service, "generate_equity_curve_image") as mock_gen_chart, \
+             patch.object(service, "send_photo_to_channel", new_callable=AsyncMock) as mock_send_photo, \
+             patch.object(service, "send_photo_to_signals_channel", new_callable=AsyncMock) as mock_send_photo_signals:
+
+            mock_settings.timezone = "UTC"
+            mock_settings.equity_curve_enabled = True
+            mock_settings.telegram_enabled = True
+            mock_settings.telegram_bot_token = "test_token"
+            mock_settings.telegram_channel_id = "-1001234567890"
+            mock_send.return_value = True
+            mock_gen_chart.return_value = io.BytesIO(b"fake chart")
+            mock_send_photo.return_value = True
+            mock_send_photo_signals.return_value = True
+
+            data = DailyReportData(
+                date="2026-01-20",
+                total_trades=5,
+                total_pyramids=8,
+                total_pnl_usdt=150.0,
+                total_pnl_percent=5.0,
+                trades=[],
+                by_exchange={},
+                by_timeframe={},
+                by_pair={},
+                equity_points=[
+                    EquityPoint(timestamp=datetime.now(UTC), cumulative_pnl=50.0),
+                    EquityPoint(timestamp=datetime.now(UTC), cumulative_pnl=100.0),
+                ]
+            )
+
+            result = await service.send_daily_report(data)
+
+            assert result is True
+            mock_gen_chart.assert_called_once()
+            mock_send_photo.assert_called_once()
+            mock_send_photo_signals.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_daily_report_equity_curve_no_data(self):
+        """Test sending daily report when equity curve has no data."""
+        from app.services.telegram_service import TelegramService
+        from app.models import DailyReportData
+
+        service = TelegramService()
+
+        with patch("app.services.telegram_service.settings") as mock_settings, \
+             patch.object(service, "send_signal_message", new_callable=AsyncMock) as mock_send, \
+             patch.object(service, "generate_equity_curve_image") as mock_gen_chart:
+
+            mock_settings.timezone = "UTC"
+            mock_settings.equity_curve_enabled = True
+            mock_send.return_value = True
+            mock_gen_chart.return_value = None  # No chart generated
+
+            data = DailyReportData(
+                date="2026-01-20",
+                total_trades=5,
+                total_pyramids=8,
+                total_pnl_usdt=150.0,
+                total_pnl_percent=5.0,
+                trades=[],
+                by_exchange={},
+                by_timeframe={},
+                by_pair={},
+                equity_points=[]  # No equity points
+            )
+
+            result = await service.send_daily_report(data)
+
+            assert result is True
+            # Chart generation should not be called with empty equity_points
+            mock_gen_chart.assert_not_called()
+
+
+class TestGetSignalsChannelId:
+    """Tests for get_signals_channel_id method."""
+
+    @pytest.mark.asyncio
+    async def test_get_signals_channel_id_from_database(self):
+        """Test getting signals channel ID from database."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value={"value": "-1009876543210"})
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        mock_db = MagicMock()
+        mock_db.connection = mock_connection
+
+        with patch("app.services.telegram_service.db", mock_db):
+            result = await service.get_signals_channel_id()
+
+        assert result == "-1009876543210"
+
+    @pytest.mark.asyncio
+    async def test_get_signals_channel_id_from_env(self):
+        """Test getting signals channel ID from environment when DB is empty."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        mock_db = MagicMock()
+        mock_db.connection = mock_connection
+
+        with patch("app.services.telegram_service.db", mock_db), \
+             patch("app.services.telegram_service.settings") as mock_settings:
+
+            mock_settings.telegram_signals_channel_id = "-1001111222333"
+
+            result = await service.get_signals_channel_id()
+
+        assert result == "-1001111222333"
+
+    @pytest.mark.asyncio
+    async def test_get_signals_channel_id_none(self):
+        """Test getting signals channel ID when not configured."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
+        mock_db = MagicMock()
+        mock_db.connection = mock_connection
+
+        with patch("app.services.telegram_service.db", mock_db), \
+             patch("app.services.telegram_service.settings") as mock_settings:
+
+            mock_settings.telegram_signals_channel_id = None
+
+            result = await service.get_signals_channel_id()
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_signals_channel_id_database_error(self):
+        """Test getting signals channel ID when database throws error."""
+        from app.services.telegram_service import TelegramService
+
+        service = TelegramService()
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(side_effect=Exception("DB error"))
+
+        mock_db = MagicMock()
+        mock_db.connection = mock_connection
+
+        with patch("app.services.telegram_service.db", mock_db), \
+             patch("app.services.telegram_service.settings") as mock_settings:
+
+            mock_settings.telegram_signals_channel_id = "-1001111222333"
+
+            result = await service.get_signals_channel_id()
+
+        # Should fall back to env var
+        assert result == "-1001111222333"

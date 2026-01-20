@@ -709,3 +709,500 @@ class TestTransaction:
         # Verify rollback happened
         is_processed = await test_db.is_alert_processed("tx_test_2")
         assert is_processed is False
+
+
+class TestAddPyramid:
+    """Tests for add_pyramid method."""
+
+    @pytest.mark.asyncio
+    async def test_add_pyramid(self, test_db):
+        """Test adding a pyramid to a trade."""
+        # First create a trade
+        await test_db.create_trade("pyramid_test_trade", "binance", "BTC", "USDT")
+
+        # Add a pyramid
+        await test_db.add_pyramid(
+            pyramid_id="pyr_test_1",
+            trade_id="pyramid_test_trade",
+            pyramid_index=0,
+            entry_price=50000.0,
+            position_size=0.02,
+            capital_usdt=1000.0,
+            fee_rate=0.001,
+            fee_usdt=1.0,
+            exchange_timestamp="2026-01-20T10:00:00Z",
+            received_timestamp="2026-01-20T10:00:01Z"
+        )
+
+        # Verify it was added
+        pyramids = await test_db.get_pyramids_for_trade("pyramid_test_trade")
+        assert len(pyramids) == 1
+        assert pyramids[0]["id"] == "pyr_test_1"
+        assert pyramids[0]["entry_price"] == 50000.0
+        assert pyramids[0]["position_size"] == 0.02
+
+    @pytest.mark.asyncio
+    async def test_add_multiple_pyramids(self, test_db):
+        """Test adding multiple pyramids to a trade."""
+        await test_db.create_trade("multi_pyr_trade", "binance", "ETH", "USDT")
+
+        # Add 3 pyramids
+        for i in range(3):
+            await test_db.add_pyramid(
+                pyramid_id=f"pyr_{i}",
+                trade_id="multi_pyr_trade",
+                pyramid_index=i,
+                entry_price=3000.0 - (i * 100),  # Decreasing prices
+                position_size=0.1,
+                capital_usdt=300.0,
+                fee_rate=0.001,
+                fee_usdt=0.3,
+            )
+
+        pyramids = await test_db.get_pyramids_for_trade("multi_pyr_trade")
+        assert len(pyramids) == 3
+        # Should be ordered by pyramid_index
+        for i, p in enumerate(pyramids):
+            assert p["pyramid_index"] == i
+
+
+class TestAddExit:
+    """Tests for add_exit method."""
+
+    @pytest.mark.asyncio
+    async def test_add_exit(self, test_db):
+        """Test adding an exit record."""
+        await test_db.create_trade("exit_test_trade", "binance", "BTC", "USDT")
+
+        await test_db.add_exit(
+            exit_id="exit_1",
+            trade_id="exit_test_trade",
+            exit_price=51000.0,
+            fee_usdt=1.0,
+            exchange_timestamp="2026-01-20T12:00:00Z",
+            received_timestamp="2026-01-20T12:00:01Z"
+        )
+
+        # Verify it was added
+        cursor = await test_db.connection.execute(
+            "SELECT * FROM exits WHERE trade_id = ?", ("exit_test_trade",)
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["exit_price"] == 51000.0
+        assert row["fee_usdt"] == 1.0
+
+
+class TestUpdatePyramidPnl:
+    """Tests for update_pyramid_pnl method."""
+
+    @pytest.mark.asyncio
+    async def test_update_pyramid_pnl(self, test_db):
+        """Test updating pyramid PnL after exit."""
+        await test_db.create_trade("pnl_update_trade", "binance", "BTC", "USDT")
+        await test_db.add_pyramid(
+            pyramid_id="pnl_pyr_1",
+            trade_id="pnl_update_trade",
+            pyramid_index=0,
+            entry_price=50000.0,
+            position_size=0.02,
+            capital_usdt=1000.0,
+            fee_rate=0.001,
+            fee_usdt=1.0,
+        )
+
+        # Update PnL
+        await test_db.update_pyramid_pnl("pnl_pyr_1", 50.0, 5.0)
+
+        # Verify update
+        cursor = await test_db.connection.execute(
+            "SELECT pnl_usdt, pnl_percent FROM pyramids WHERE id = ?", ("pnl_pyr_1",)
+        )
+        row = await cursor.fetchone()
+        assert row["pnl_usdt"] == 50.0
+        assert row["pnl_percent"] == 5.0
+
+
+class TestSymbolRules:
+    """Tests for symbol rules cache methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_rules_not_found(self, test_db):
+        """Test getting non-existent symbol rules."""
+        rules = await test_db.get_symbol_rules("binance", "BTC", "USDT")
+        assert rules is None
+
+    @pytest.mark.asyncio
+    async def test_upsert_symbol_rules(self, test_db):
+        """Test upserting symbol rules."""
+        await test_db.upsert_symbol_rules(
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            price_precision=2,
+            qty_precision=6,
+            min_qty=0.000001,
+            min_notional=5.0,
+            tick_size=0.01,
+        )
+
+        rules = await test_db.get_symbol_rules("binance", "BTC", "USDT")
+        assert rules is not None
+        assert rules["price_precision"] == 2
+        assert rules["qty_precision"] == 6
+        assert rules["min_qty"] == 0.000001
+        assert rules["min_notional"] == 5.0
+        assert rules["tick_size"] == 0.01
+
+    @pytest.mark.asyncio
+    async def test_upsert_symbol_rules_update(self, test_db):
+        """Test updating existing symbol rules."""
+        # Insert first version
+        await test_db.upsert_symbol_rules(
+            exchange="binance", base="ETH", quote="USDT",
+            price_precision=2, qty_precision=4,
+            min_qty=0.001, min_notional=5.0, tick_size=0.01,
+        )
+
+        # Update
+        await test_db.upsert_symbol_rules(
+            exchange="binance", base="ETH", quote="USDT",
+            price_precision=3, qty_precision=5,
+            min_qty=0.0001, min_notional=10.0, tick_size=0.001,
+        )
+
+        rules = await test_db.get_symbol_rules("binance", "ETH", "USDT")
+        assert rules["price_precision"] == 3
+        assert rules["qty_precision"] == 5
+        assert rules["min_notional"] == 10.0
+
+
+class TestSettings:
+    """Tests for settings methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_setting_not_found(self, test_db):
+        """Test getting non-existent setting."""
+        value = await test_db.get_setting("nonexistent_key")
+        assert value is None
+
+    @pytest.mark.asyncio
+    async def test_set_and_get_setting(self, test_db):
+        """Test setting and getting a setting."""
+        await test_db.set_setting("test_key", "test_value")
+
+        value = await test_db.get_setting("test_key")
+        assert value == "test_value"
+
+    @pytest.mark.asyncio
+    async def test_set_setting_update(self, test_db):
+        """Test updating an existing setting."""
+        await test_db.set_setting("update_key", "value1")
+        await test_db.set_setting("update_key", "value2")
+
+        value = await test_db.get_setting("update_key")
+        assert value == "value2"
+
+
+class TestIsPaused:
+    """Tests for is_paused method."""
+
+    @pytest.mark.asyncio
+    async def test_is_paused_default(self, test_db):
+        """Test is_paused returns False by default."""
+        is_paused = await test_db.is_paused()
+        assert is_paused is False
+
+    @pytest.mark.asyncio
+    async def test_is_paused_true(self, test_db):
+        """Test is_paused returns True when set."""
+        await test_db.set_setting("paused", "true")
+
+        is_paused = await test_db.is_paused()
+        assert is_paused is True
+
+    @pytest.mark.asyncio
+    async def test_is_paused_false(self, test_db):
+        """Test is_paused returns False when explicitly set."""
+        await test_db.set_setting("paused", "false")
+
+        is_paused = await test_db.is_paused()
+        assert is_paused is False
+
+
+class TestIsPairIgnored:
+    """Tests for is_pair_ignored method."""
+
+    @pytest.mark.asyncio
+    async def test_is_pair_ignored_default(self, test_db):
+        """Test is_pair_ignored returns False by default."""
+        is_ignored = await test_db.is_pair_ignored("BTC", "USDT")
+        assert is_ignored is False
+
+    @pytest.mark.asyncio
+    async def test_is_pair_ignored_true(self, test_db):
+        """Test is_pair_ignored returns True when pair is ignored."""
+        await test_db.set_setting("ignored_pairs", "BTC/USDT,ETH/USDT")
+
+        assert await test_db.is_pair_ignored("BTC", "USDT") is True
+        assert await test_db.is_pair_ignored("ETH", "USDT") is True
+        assert await test_db.is_pair_ignored("XRP", "USDT") is False
+
+
+class TestGetNextGroupSequence:
+    """Tests for get_next_group_sequence method."""
+
+    @pytest.mark.asyncio
+    async def test_first_sequence(self, test_db):
+        """Test getting first sequence number."""
+        seq = await test_db.get_next_group_sequence("BTC", "binance", "1h")
+
+        assert seq == 1
+
+    @pytest.mark.asyncio
+    async def test_increment_sequence(self, test_db):
+        """Test sequence increments correctly."""
+        seq1 = await test_db.get_next_group_sequence("ETH", "binance", "1h")
+        seq2 = await test_db.get_next_group_sequence("ETH", "binance", "1h")
+        seq3 = await test_db.get_next_group_sequence("ETH", "binance", "1h")
+
+        assert seq1 == 1
+        assert seq2 == 2
+        assert seq3 == 3
+
+    @pytest.mark.asyncio
+    async def test_different_keys_separate_sequences(self, test_db):
+        """Test different base/exchange/timeframe have separate sequences."""
+        seq1 = await test_db.get_next_group_sequence("BTC", "binance", "1h")
+        seq2 = await test_db.get_next_group_sequence("BTC", "bybit", "1h")
+        seq3 = await test_db.get_next_group_sequence("BTC", "binance", "4h")
+
+        # All should be 1 since they're different keys
+        assert seq1 == 1
+        assert seq2 == 1
+        assert seq3 == 1
+
+
+class TestGetOpenTradeByGroup:
+    """Tests for get_open_trade_by_group method."""
+
+    @pytest.mark.asyncio
+    async def test_get_open_trade_by_group(self, test_db):
+        """Test getting open trade by group."""
+        await test_db.create_trade_with_group(
+            trade_id="group_trade_1",
+            group_id="BTC_Binance_1h_001",
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            timeframe="1h",
+        )
+
+        trade = await test_db.get_open_trade_by_group(
+            "binance", "BTC", "USDT", "1h"
+        )
+
+        assert trade is not None
+        assert trade["id"] == "group_trade_1"
+        assert trade["group_id"] == "BTC_Binance_1h_001"
+
+    @pytest.mark.asyncio
+    async def test_get_open_trade_by_group_not_found(self, test_db):
+        """Test get_open_trade_by_group returns None when not found."""
+        trade = await test_db.get_open_trade_by_group(
+            "binance", "NONEXISTENT", "USDT", "1h"
+        )
+        assert trade is None
+
+
+class TestCreateTradeWithGroup:
+    """Tests for create_trade_with_group method."""
+
+    @pytest.mark.asyncio
+    async def test_create_trade_with_group(self, test_db):
+        """Test creating a trade with group ID."""
+        await test_db.create_trade_with_group(
+            trade_id="grouped_trade",
+            group_id="ETH_Binance_4h_001",
+            exchange="binance",
+            base="ETH",
+            quote="USDT",
+            timeframe="4h",
+            position_side="long",
+        )
+
+        # Verify
+        cursor = await test_db.connection.execute(
+            "SELECT * FROM trades WHERE id = ?", ("grouped_trade",)
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None
+        assert row["group_id"] == "ETH_Binance_4h_001"
+        assert row["timeframe"] == "4h"
+        assert row["position_side"] == "long"
+        assert row["status"] == "open"
+
+
+class TestPyramidCapital:
+    """Tests for pyramid capital methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_pyramid_capital_default(self, test_db):
+        """Test getting default capital when not set."""
+        capital = await test_db.get_pyramid_capital(
+            pyramid_index=0,
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            timeframe="1h",
+        )
+        assert capital == 1000.0  # Default
+
+    @pytest.mark.asyncio
+    async def test_set_and_get_pyramid_capital(self, test_db):
+        """Test setting and getting pyramid capital."""
+        await test_db.set_pyramid_capital(
+            pyramid_index=0,
+            capital=500.0,
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            timeframe="1h",
+        )
+
+        capital = await test_db.get_pyramid_capital(
+            pyramid_index=0,
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            timeframe="1h",
+        )
+        assert capital == 500.0
+
+    @pytest.mark.asyncio
+    async def test_get_all_pyramid_capitals_empty(self, test_db):
+        """Test getting all capitals when none set."""
+        capitals = await test_db.get_all_pyramid_capitals()
+        assert capitals == {}
+
+    @pytest.mark.asyncio
+    async def test_get_all_pyramid_capitals(self, test_db):
+        """Test getting all pyramid capitals."""
+        await test_db.set_pyramid_capital(
+            0, 500.0, "binance", "BTC", "USDT", "1h"
+        )
+        await test_db.set_pyramid_capital(
+            1, 750.0, "binance", "BTC", "USDT", "1h"
+        )
+
+        capitals = await test_db.get_all_pyramid_capitals()
+        assert len(capitals) == 2
+
+    @pytest.mark.asyncio
+    async def test_clear_pyramid_capital(self, test_db):
+        """Test clearing specific pyramid capital."""
+        await test_db.set_pyramid_capital(
+            0, 500.0, "binance", "BTC", "USDT", "1h"
+        )
+        await test_db.set_pyramid_capital(
+            0, None, "binance", "BTC", "USDT", "1h"  # Clear it
+        )
+
+        capital = await test_db.get_pyramid_capital(
+            0, "binance", "BTC", "USDT", "1h"
+        )
+        assert capital == 1000.0  # Back to default
+
+    @pytest.mark.asyncio
+    async def test_clear_all_pyramid_capitals(self, test_db):
+        """Test clearing all pyramid capitals."""
+        await test_db.set_pyramid_capital(
+            0, 500.0, "binance", "BTC", "USDT", "1h"
+        )
+        await test_db.set_pyramid_capital(
+            0, 750.0, "binance", "ETH", "USDT", "1h"
+        )
+
+        await test_db.clear_all_pyramid_capitals()
+
+        capitals = await test_db.get_all_pyramid_capitals()
+        assert capitals == {}
+
+
+class TestResetMethods:
+    """Tests for database reset methods."""
+
+    @pytest.mark.asyncio
+    async def test_reset_trades(self, populated_db):
+        """Test reset_trades clears all trade data."""
+        counts = await populated_db.reset_trades()
+
+        assert counts["trades"] > 0
+        assert counts["pyramids"] > 0
+
+        # Verify data was cleared
+        cursor = await populated_db.connection.execute("SELECT COUNT(*) FROM trades")
+        row = await cursor.fetchone()
+        assert row[0] == 0
+
+        cursor = await populated_db.connection.execute("SELECT COUNT(*) FROM pyramids")
+        row = await cursor.fetchone()
+        assert row[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_reset_settings(self, test_db):
+        """Test reset_settings clears all settings."""
+        # Add some settings
+        await test_db.set_setting("key1", "value1")
+        await test_db.set_setting("key2", "value2")
+
+        counts = await test_db.reset_settings()
+
+        assert counts["settings"] == 2
+
+        # Verify cleared
+        value = await test_db.get_setting("key1")
+        assert value is None
+
+    @pytest.mark.asyncio
+    async def test_reset_cache(self, test_db):
+        """Test reset_cache clears cached data."""
+        # Add some symbol rules
+        await test_db.upsert_symbol_rules(
+            "binance", "BTC", "USDT", 2, 6, 0.00001, 5.0, 0.01
+        )
+
+        counts = await test_db.reset_cache()
+
+        assert counts["symbol_rules"] > 0
+
+        # Verify cleared
+        rules = await test_db.get_symbol_rules("binance", "BTC", "USDT")
+        assert rules is None
+
+    @pytest.mark.asyncio
+    async def test_reset_all(self, populated_db):
+        """Test reset_all clears everything."""
+        # Add some settings
+        await populated_db.set_setting("key1", "value1")
+        await populated_db.upsert_symbol_rules(
+            "binance", "BTC", "USDT", 2, 6, 0.00001, 5.0, 0.01
+        )
+
+        counts = await populated_db.reset_all()
+
+        # Should have counts from all reset methods
+        assert "trades" in counts
+        assert "settings" in counts
+        assert "symbol_rules" in counts
+
+        # Verify everything is empty
+        cursor = await populated_db.connection.execute("SELECT COUNT(*) FROM trades")
+        assert (await cursor.fetchone())[0] == 0
+
+        cursor = await populated_db.connection.execute("SELECT COUNT(*) FROM settings")
+        assert (await cursor.fetchone())[0] == 0
+
+        cursor = await populated_db.connection.execute("SELECT COUNT(*) FROM symbol_rules")
+        assert (await cursor.fetchone())[0] == 0

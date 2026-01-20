@@ -484,6 +484,476 @@ class TestPriceDataDataclass:
         assert data2.timestamp == 9999999999999
 
 
+class TestOKXGetPrice:
+    """Tests for OKX get_price method."""
+
+    @pytest.mark.asyncio
+    async def test_get_price_success(self):
+        """Test successful price fetch from OKX."""
+        from app.exchanges.okx import OKXExchange
+        import httpx
+
+        exchange = OKXExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "code": "0",
+            "data": [{"last": "50000.50", "ts": 1705762800000}]
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                price_data = await exchange.get_price("BTC", "USDT")
+
+            assert price_data.price == 50000.50
+
+    @pytest.mark.asyncio
+    async def test_get_price_symbol_not_found(self):
+        """Test price fetch for non-existent symbol."""
+        from app.exchanges.okx import OKXExchange
+        from app.exchanges.base import SymbolNotFoundError
+        import httpx
+
+        exchange = OKXExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"code": "0", "data": []}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                with pytest.raises(SymbolNotFoundError):
+                    await exchange.get_price("INVALID", "USDT")
+
+    @pytest.mark.asyncio
+    async def test_get_price_api_error(self):
+        """Test price fetch with API error response."""
+        from app.exchanges.okx import OKXExchange
+        from app.exchanges.base import ExchangeAPIError
+        import httpx
+
+        exchange = OKXExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"code": "51001", "msg": "Instrument does not exist"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                with pytest.raises(ExchangeAPIError):
+                    await exchange.get_price("BTC", "USDT")
+
+
+class TestOKXGetSymbolInfo:
+    """Tests for OKX get_symbol_info method."""
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_success(self):
+        """Test successful symbol info fetch from OKX."""
+        from app.exchanges.okx import OKXExchange
+        import httpx
+
+        exchange = OKXExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "code": "0",
+            "data": [{
+                "tickSz": "0.01",
+                "lotSz": "0.0001",
+                "minSz": "0.0001"
+            }]
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                info = await exchange.get_symbol_info("BTC", "USDT")
+
+            assert info.base == "BTC"
+            assert info.quote == "USDT"
+            assert info.tick_size == 0.01
+
+
+class TestKuCoinGetPrice:
+    """Tests for KuCoin get_price method."""
+
+    @pytest.mark.asyncio
+    async def test_get_price_success(self):
+        """Test successful price fetch from KuCoin."""
+        from app.exchanges.kucoin import KucoinExchange
+        import httpx
+
+        exchange = KucoinExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "code": "200000",
+            "data": {"price": "50000.50", "time": 1705762800000}
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                price_data = await exchange.get_price("BTC", "USDT")
+
+            assert price_data.price == 50000.50
+
+    @pytest.mark.asyncio
+    async def test_get_price_symbol_not_found(self):
+        """Test price fetch for non-existent symbol."""
+        from app.exchanges.kucoin import KucoinExchange
+        from app.exchanges.base import SymbolNotFoundError
+        import httpx
+
+        exchange = KucoinExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"code": "200000", "data": None}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                with pytest.raises(SymbolNotFoundError):
+                    await exchange.get_price("INVALID", "USDT")
+
+    @pytest.mark.asyncio
+    async def test_get_price_api_error(self):
+        """Test price fetch with API error response."""
+        from app.exchanges.kucoin import KucoinExchange
+        from app.exchanges.base import ExchangeAPIError
+        import httpx
+
+        exchange = KucoinExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"code": "400001", "msg": "Bad Request"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                with pytest.raises(ExchangeAPIError):
+                    await exchange.get_price("BTC", "USDT")
+
+
+class TestKuCoinGetSymbolInfo:
+    """Tests for KuCoin get_symbol_info method."""
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_success(self):
+        """Test successful symbol info fetch from KuCoin."""
+        from app.exchanges.kucoin import KucoinExchange
+        import httpx
+
+        exchange = KucoinExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "code": "200000",
+            "data": [{
+                "symbol": "BTC-USDT",
+                "priceIncrement": "0.01",
+                "baseIncrement": "0.0001",
+                "baseMinSize": "0.0001",
+                "quoteMinSize": "10"
+            }]
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                info = await exchange.get_symbol_info("BTC", "USDT")
+
+            assert info.base == "BTC"
+            assert info.quote == "USDT"
+            assert info.min_notional == 10.0
+
+
+class TestGateIOGetPrice:
+    """Tests for Gate.io get_price method."""
+
+    @pytest.mark.asyncio
+    async def test_get_price_success(self):
+        """Test successful price fetch from Gate.io."""
+        from app.exchanges.gateio import GateIOExchange
+        import httpx
+
+        exchange = GateIOExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = [{"last": "50000.50"}]
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                price_data = await exchange.get_price("BTC", "USDT")
+
+            assert price_data.price == 50000.50
+
+    @pytest.mark.asyncio
+    async def test_get_price_symbol_not_found(self):
+        """Test price fetch for non-existent symbol."""
+        from app.exchanges.gateio import GateIOExchange
+        from app.exchanges.base import SymbolNotFoundError
+        import httpx
+
+        exchange = GateIOExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = []
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                with pytest.raises(SymbolNotFoundError):
+                    await exchange.get_price("INVALID", "USDT")
+
+
+class TestGateIOGetSymbolInfo:
+    """Tests for Gate.io get_symbol_info method."""
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_success(self):
+        """Test successful symbol info fetch from Gate.io."""
+        from app.exchanges.gateio import GateIOExchange
+        import httpx
+
+        exchange = GateIOExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "precision": 2,
+            "amount_precision": 4,
+            "min_base_amount": "0.0001",
+            "min_quote_amount": "10"
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                info = await exchange.get_symbol_info("BTC", "USDT")
+
+            assert info.base == "BTC"
+            assert info.quote == "USDT"
+            assert info.price_precision == 2
+            assert info.qty_precision == 4
+
+
+class TestMEXCGetPrice:
+    """Tests for MEXC get_price method."""
+
+    @pytest.mark.asyncio
+    async def test_get_price_success(self):
+        """Test successful price fetch from MEXC."""
+        from app.exchanges.mexc import MEXCExchange
+        import httpx
+
+        exchange = MEXCExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"symbol": "BTCUSDT", "price": "50000.50"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                price_data = await exchange.get_price("BTC", "USDT")
+
+            assert price_data.price == 50000.50
+
+    @pytest.mark.asyncio
+    async def test_get_price_symbol_not_found(self):
+        """Test price fetch for non-existent symbol."""
+        from app.exchanges.mexc import MEXCExchange
+        from app.exchanges.base import SymbolNotFoundError
+        import httpx
+
+        exchange = MEXCExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                with pytest.raises(SymbolNotFoundError):
+                    await exchange.get_price("INVALID", "USDT")
+
+
+class TestMEXCGetSymbolInfo:
+    """Tests for MEXC get_symbol_info method."""
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_success(self):
+        """Test successful symbol info fetch from MEXC."""
+        from app.exchanges.mexc import MEXCExchange
+        import httpx
+
+        exchange = MEXCExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "symbols": [{
+                "symbol": "BTCUSDT",
+                "quotePrecision": 2,
+                "baseSizePrecision": 4,
+                "filters": [
+                    {"filterType": "LOT_SIZE", "minQty": "0.0001", "stepSize": "0.0001"},
+                    {"filterType": "MIN_NOTIONAL", "minNotional": "10"},
+                    {"filterType": "PRICE_FILTER", "tickSize": "0.01"}
+                ]
+            }]
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                info = await exchange.get_symbol_info("BTC", "USDT")
+
+            assert info.base == "BTC"
+            assert info.quote == "USDT"
+            assert info.min_qty == 0.0001
+            assert info.min_notional == 10.0
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_not_found(self):
+        """Test symbol info fetch for non-existent symbol."""
+        from app.exchanges.mexc import MEXCExchange
+        from app.exchanges.base import SymbolNotFoundError
+        import httpx
+
+        exchange = MEXCExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"symbols": []}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                with pytest.raises(SymbolNotFoundError):
+                    await exchange.get_symbol_info("INVALID", "USDT")
+
+
+class TestBinanceGetSymbolInfo:
+    """Tests for Binance get_symbol_info method."""
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_success(self):
+        """Test successful symbol info fetch from Binance."""
+        from app.exchanges.binance import BinanceExchange
+        import httpx
+
+        exchange = BinanceExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "symbols": [{
+                "symbol": "BTCUSDT",
+                "baseAsset": "BTC",
+                "quoteAsset": "USDT",
+                "filters": [
+                    {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                    {"filterType": "LOT_SIZE", "minQty": "0.00001", "stepSize": "0.00001"},
+                    {"filterType": "NOTIONAL", "minNotional": "10.0"}
+                ]
+            }]
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                info = await exchange.get_symbol_info("BTC", "USDT")
+
+            assert info.base == "BTC"
+            assert info.quote == "USDT"
+            assert info.min_notional == 10.0
+
+
+class TestBybitGetSymbolInfo:
+    """Tests for Bybit get_symbol_info method."""
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_success(self):
+        """Test successful symbol info fetch from Bybit."""
+        from app.exchanges.bybit import BybitExchange
+        import httpx
+
+        exchange = BybitExchange()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "retCode": 0,
+            "result": {
+                "list": [{
+                    "symbol": "BTCUSDT",
+                    "baseCoin": "BTC",
+                    "quoteCoin": "USDT",
+                    "lotSizeFilter": {"minOrderQty": "0.00001", "basePrecision": "0.00001"},
+                    "priceFilter": {"tickSize": "0.01"}
+                }]
+            }
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as mock_request:
+            mock_request.return_value = mock_response
+
+            async with exchange:
+                info = await exchange.get_symbol_info("BTC", "USDT")
+
+            assert info.base == "BTC"
+            assert info.quote == "USDT"
+
+
 class TestExchangeEdgeCases:
     """Edge case tests for exchange functionality."""
 
