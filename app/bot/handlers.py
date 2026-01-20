@@ -300,11 +300,13 @@ async def generate_period_report(days: int):
 
     total_pnl = sum(t['total_pnl_usdt'] or 0 for t in trades)
     total_capital = 0.0
+    total_pyramids = 0
     by_exchange = defaultdict(lambda: {"pnl": 0, "trades": 0})
     by_pair = defaultdict(float)
 
     for trade in trades:
         pyramids = await db.get_pyramids_for_trade(trade['id'])
+        total_pyramids += len(pyramids)
         for p in pyramids:
             total_capital += p.get('capital_usdt', 0) or 0
 
@@ -317,7 +319,7 @@ async def generate_period_report(days: int):
     return DailyReportData(
         date=f"Last {days} days",
         total_trades=len(trades),
-        total_pyramids=sum(len(await db.get_pyramids_for_trade(t['id'])) for t in trades),
+        total_pyramids=total_pyramids,
         total_pnl_usdt=total_pnl,
         total_pnl_percent=(total_pnl / total_capital * 100) if total_capital > 0 else 0,
         by_exchange=dict(by_exchange),
