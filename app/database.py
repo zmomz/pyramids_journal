@@ -1,6 +1,6 @@
 import aiosqlite
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import AsyncGenerator
 
 from .config import settings, ensure_data_directory
@@ -225,7 +225,7 @@ class Database:
         """Mark an alert as processed."""
         await self.connection.execute(
             "INSERT OR IGNORE INTO processed_alerts (alert_id, processed_at) VALUES (?, ?)",
-            (alert_id, datetime.utcnow().isoformat()),
+            (alert_id, datetime.now(UTC).isoformat()),
         )
         await self.connection.commit()
 
@@ -252,7 +252,7 @@ class Database:
             INSERT INTO trades (id, exchange, base, quote, status, created_at)
             VALUES (?, ?, ?, ?, 'open', ?)
             """,
-            (trade_id, exchange, base, quote, datetime.utcnow().isoformat()),
+            (trade_id, exchange, base, quote, datetime.now(UTC).isoformat()),
         )
         await self.connection.commit()
 
@@ -266,7 +266,7 @@ class Database:
             SET status = 'closed', closed_at = ?, total_pnl_usdt = ?, total_pnl_percent = ?
             WHERE id = ?
             """,
-            (datetime.utcnow().isoformat(), total_pnl_usdt, total_pnl_percent, trade_id),
+            (datetime.now(UTC).isoformat(), total_pnl_usdt, total_pnl_percent, trade_id),
         )
         await self.connection.commit()
 
@@ -894,7 +894,7 @@ class Database:
                 total_pyramids,
                 total_pnl_usdt,
                 report_json,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ),
         )
         await self.connection.commit()

@@ -4,7 +4,7 @@ Message Formatters for Telegram Bot
 Formats data into readable Telegram messages.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 import pytz
@@ -16,7 +16,7 @@ def get_local_time(utc_time: datetime | None = None) -> datetime:
     """Convert UTC time to configured timezone."""
     tz = pytz.timezone(settings.timezone)
     if utc_time is None:
-        utc_time = datetime.utcnow()
+        utc_time = datetime.now(UTC)
     if utc_time.tzinfo is None:
         utc_time = pytz.utc.localize(utc_time)
     return utc_time.astimezone(tz)

@@ -4,7 +4,7 @@ Tests for FastAPI application in app/main.py
 Tests the webhook endpoint and API routes.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -423,7 +423,7 @@ class TestModelsValidation:
             position_size=0.02,
             capital_usdt=1000.0,
             exchange_timestamp="2026-01-20T10:00:00Z",
-            received_timestamp=datetime.utcnow(),
+            received_timestamp=datetime.now(UTC),
             total_pyramids=1
         )
 
@@ -444,9 +444,9 @@ class TestModelsValidation:
             quote="USDT",
             pyramids=[{"index": 0, "entry_price": 50000.0, "size": 0.02}],
             exit_price=51000.0,
-            exit_time=datetime.utcnow(),
+            exit_time=datetime.now(UTC),
             exchange_timestamp="2026-01-20T12:00:00Z",
-            received_timestamp=datetime.utcnow(),
+            received_timestamp=datetime.now(UTC),
             gross_pnl=20.0,
             total_fees=2.0,
             net_pnl=18.0,
@@ -462,7 +462,7 @@ class TestModelsValidation:
         from app.models import EquityPoint
 
         point = EquityPoint(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             cumulative_pnl=150.0
         )
 

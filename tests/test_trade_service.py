@@ -4,7 +4,7 @@ Tests for trade service in app/services/trade_service.py
 Tests the core trade processing logic.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -150,7 +150,7 @@ class TestProcessEntry:
             mock_exchange.get_price = AsyncMock(side_effect=Exception("Connection error"))
 
             result, data = await TradeService._process_entry(
-                alert, "binance", parsed, datetime.utcnow()
+                alert, "binance", parsed, datetime.now(UTC)
             )
 
         assert result.success is False
@@ -195,7 +195,7 @@ class TestProcessEntry:
             mock_settings.validation_mode = "lenient"
 
             result, data = await TradeService._process_entry(
-                alert, "binance", parsed, datetime.utcnow()
+                alert, "binance", parsed, datetime.now(UTC)
             )
 
         assert result.success is True
@@ -246,7 +246,7 @@ class TestProcessEntry:
             mock_settings.validation_mode = "lenient"
 
             result, data = await TradeService._process_entry(
-                alert, "binance", parsed, datetime.utcnow()
+                alert, "binance", parsed, datetime.now(UTC)
             )
 
         assert result.success is True
@@ -291,7 +291,7 @@ class TestProcessEntry:
             mock_settings.validation_mode = "strict"
 
             result, data = await TradeService._process_entry(
-                alert, "binance", parsed, datetime.utcnow()
+                alert, "binance", parsed, datetime.now(UTC)
             )
 
         assert result.success is False
@@ -314,7 +314,7 @@ class TestProcessExit:
             mock_db.get_open_trade_by_group = AsyncMock(return_value=None)
 
             result, data = await TradeService._process_exit(
-                alert, "binance", parsed, datetime.utcnow()
+                alert, "binance", parsed, datetime.now(UTC)
             )
 
         assert result.success is False
@@ -338,7 +338,7 @@ class TestProcessExit:
             mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
 
             result, data = await TradeService._process_exit(
-                alert, "binance", parsed, datetime.utcnow()
+                alert, "binance", parsed, datetime.now(UTC)
             )
 
         assert result.success is False
@@ -397,7 +397,7 @@ class TestProcessExit:
             mock_config.get_fee_rate = MagicMock(return_value=0.001)
 
             result, data = await TradeService._process_exit(
-                alert, "binance", parsed, datetime.utcnow()
+                alert, "binance", parsed, datetime.now(UTC)
             )
 
         assert result.success is True
@@ -428,7 +428,7 @@ class TestProcessExit:
             mock_exchange.get_price = AsyncMock(side_effect=Exception("Connection error"))
 
             result, data = await TradeService._process_exit(
-                alert, "binance", parsed, datetime.utcnow()
+                alert, "binance", parsed, datetime.now(UTC)
             )
 
         assert result.success is False

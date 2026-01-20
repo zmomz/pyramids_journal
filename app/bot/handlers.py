@@ -7,7 +7,7 @@ All bot command handlers for monitoring, reporting, configuration, and control.
 import csv
 import io
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Tuple
 
 import pytz
@@ -1122,7 +1122,7 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         output.seek(0)
         await update.message.reply_document(
             document=io.BytesIO(output.getvalue().encode()),
-            filename=f"trades_export_{datetime.utcnow().strftime('%Y%m%d')}.csv",
+            filename=f"trades_export_{datetime.now(UTC).strftime('%Y%m%d')}.csv",
             caption="📤 Trade export"
         )
 

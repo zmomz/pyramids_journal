@@ -4,7 +4,7 @@ Tests for Telegram service in app/services/telegram_service.py
 Tests the notification formatting and sending logic.
 """
 
-from datetime import datetime
+from datetime import datetime, UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -283,7 +283,7 @@ class TestFormatPyramidEntryMessage:
                 position_size=0.02,
                 capital_usdt=1000.0,
                 exchange_timestamp="2026-01-20T10:00:00Z",
-                received_timestamp=datetime.utcnow(),
+                received_timestamp=datetime.now(UTC),
                 total_pyramids=1
             )
 
@@ -353,9 +353,9 @@ class TestFormatTradeClosedMessage:
                     }
                 ],
                 exit_price=51000.0,
-                exit_time=datetime.utcnow(),
+                exit_time=datetime.now(UTC),
                 exchange_timestamp="2026-01-20T12:00:00Z",
-                received_timestamp=datetime.utcnow(),
+                received_timestamp=datetime.now(UTC),
                 gross_pnl=20.0,
                 total_fees=2.0,
                 net_pnl=18.0,
@@ -397,9 +397,9 @@ class TestFormatTradeClosedMessage:
                     }
                 ],
                 exit_price=49000.0,
-                exit_time=datetime.utcnow(),
+                exit_time=datetime.now(UTC),
                 exchange_timestamp="2026-01-20T12:00:00Z",
-                received_timestamp=datetime.utcnow(),
+                received_timestamp=datetime.now(UTC),
                 gross_pnl=-20.0,
                 total_fees=2.0,
                 net_pnl=-22.0,
@@ -443,9 +443,9 @@ class TestFormatTradeClosedMessage:
                     }
                 ],
                 exit_price=51000.0,
-                exit_time=datetime.utcnow(),
+                exit_time=datetime.now(UTC),
                 exchange_timestamp="2026-01-20T12:00:00Z",
-                received_timestamp=datetime.utcnow(),
+                received_timestamp=datetime.now(UTC),
                 gross_pnl=25.0,
                 total_fees=3.0,
                 net_pnl=22.0,
@@ -640,7 +640,7 @@ class TestGenerateEquityCurveImage:
         service = TelegramService()
 
         # Only 1 point - should return None
-        points = [EquityPoint(timestamp=datetime.utcnow(), cumulative_pnl=100.0)]
+        points = [EquityPoint(timestamp=datetime.now(UTC), cumulative_pnl=100.0)]
         result = service.generate_equity_curve_image(points, "2026-01-20")
         assert result is None
 

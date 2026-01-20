@@ -6,7 +6,7 @@ Handles sending trade notifications and daily reports to Telegram.
 
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, UTC
 
 import pytz
 from telegram import Bot
@@ -68,7 +68,7 @@ class TelegramService:
         """Convert UTC time to configured timezone."""
         tz = pytz.timezone(settings.timezone)
         if utc_time is None:
-            utc_time = datetime.utcnow()
+            utc_time = datetime.now(UTC)
         if utc_time.tzinfo is None:
             utc_time = pytz.utc.localize(utc_time)
         return utc_time.astimezone(tz)

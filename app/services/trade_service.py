@@ -7,7 +7,7 @@ Core business logic for handling pyramid entries and exits.
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 from ..config import settings, exchange_config
@@ -61,7 +61,7 @@ class TradeService:
             - For exit: notification_data is TradeClosedData
             - For ignored: notification_data is None
         """
-        received_timestamp = datetime.utcnow()
+        received_timestamp = datetime.now(UTC)
 
         # Idempotency check disabled - process all signals regardless of order_id
         # if await db.is_alert_processed(alert.order_id):
