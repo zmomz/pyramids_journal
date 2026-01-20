@@ -1639,7 +1639,7 @@ class TestGetSignalsChannelId:
         mock_db = MagicMock()
         mock_db.connection = mock_connection
 
-        with patch("app.services.telegram_service.db", mock_db):
+        with patch("app.database.db", mock_db):
             result = await service.get_signals_channel_id()
 
         assert result == "-1009876543210"
@@ -1660,7 +1660,7 @@ class TestGetSignalsChannelId:
         mock_db = MagicMock()
         mock_db.connection = mock_connection
 
-        with patch("app.services.telegram_service.db", mock_db), \
+        with patch("app.database.db", mock_db), \
              patch("app.services.telegram_service.settings") as mock_settings:
 
             mock_settings.telegram_signals_channel_id = "-1001111222333"
@@ -1685,7 +1685,7 @@ class TestGetSignalsChannelId:
         mock_db = MagicMock()
         mock_db.connection = mock_connection
 
-        with patch("app.services.telegram_service.db", mock_db), \
+        with patch("app.database.db", mock_db), \
              patch("app.services.telegram_service.settings") as mock_settings:
 
             mock_settings.telegram_signals_channel_id = None
@@ -1707,7 +1707,7 @@ class TestGetSignalsChannelId:
         mock_db = MagicMock()
         mock_db.connection = mock_connection
 
-        with patch("app.services.telegram_service.db", mock_db), \
+        with patch("app.database.db", mock_db), \
              patch("app.services.telegram_service.settings") as mock_settings:
 
             mock_settings.telegram_signals_channel_id = "-1001111222333"

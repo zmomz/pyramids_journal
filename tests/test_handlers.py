@@ -1372,14 +1372,8 @@ class TestGeneratePeriodReport:
         """Test generating 7-day period report."""
         from app.bot.handlers import generate_period_report
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=[])
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
+            mock_db.get_trades_for_period = AsyncMock(return_value=[])
             mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
 
             report = await generate_period_report(7)
@@ -1392,14 +1386,8 @@ class TestGeneratePeriodReport:
         """Test generating 30-day period report."""
         from app.bot.handlers import generate_period_report
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=[])
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
+            mock_db.get_trades_for_period = AsyncMock(return_value=[])
             mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
 
             report = await generate_period_report(30)

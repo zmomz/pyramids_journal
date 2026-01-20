@@ -417,13 +417,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "perf_stats"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_stats", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_stats = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_stats.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_perf_best_callback(self, mock_callback_update, mock_callback_context):
@@ -433,13 +432,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "perf_best"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_best", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_best = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_best.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_perf_worst_callback(self, mock_callback_update, mock_callback_context):
@@ -449,13 +447,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "perf_worst"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_worst", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_worst = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_worst.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_perf_drawdown_callback(self, mock_callback_update, mock_callback_context):
@@ -465,13 +462,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "perf_drawdown"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_drawdown", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_drawdown = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_drawdown.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_perf_streak_callback(self, mock_callback_update, mock_callback_context):
@@ -481,13 +477,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "perf_streak"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_streak", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_streak = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_streak.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_pnl_show_callback(self, mock_callback_update, mock_callback_context):
@@ -497,13 +492,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "pnl_show"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_pnl", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_pnl = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_pnl.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_trades_status_callback(self, mock_callback_update, mock_callback_context):
@@ -513,13 +507,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "trades_status"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_status", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_status = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_status.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_trades_live_callback(self, mock_callback_update, mock_callback_context):
@@ -529,13 +522,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "trades_live"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_live", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_live = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_live.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_trades_recent_callback(self, mock_callback_update, mock_callback_context):
@@ -545,13 +537,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "trades_recent"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_trades", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_trades = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_trades.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_trades_today_callback(self, mock_callback_update, mock_callback_context):
@@ -561,13 +552,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "trades_today"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_trades", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_trades = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_trades.assert_called_once()
+            mock_cmd.assert_called_once()
             assert mock_callback_context.args == ["today"]
 
     @pytest.mark.asyncio
@@ -578,13 +568,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "trades_week"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_trades", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_trades = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_trades.assert_called_once()
+            mock_cmd.assert_called_once()
             assert mock_callback_context.args == ["week"]
 
     @pytest.mark.asyncio
@@ -595,13 +584,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "settings_timezone"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_timezone", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_timezone = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_timezone.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_settings_reporttime_callback(self, mock_callback_update, mock_callback_context):
@@ -611,13 +599,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "settings_reporttime"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_reporttime", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_reporttime = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_reporttime.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_settings_fees_callback(self, mock_callback_update, mock_callback_context):
@@ -627,13 +614,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "settings_fees"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_fees", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_fees = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_fees.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_settings_capital_callback(self, mock_callback_update, mock_callback_context):
@@ -643,13 +629,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "settings_capital"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_set_capital", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_set_capital = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_set_capital.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_settings_pause_callback(self, mock_callback_update, mock_callback_context):
@@ -659,13 +644,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "settings_pause"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_pause", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_pause = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_pause.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_settings_resume_callback(self, mock_callback_update, mock_callback_context):
@@ -675,13 +659,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "settings_resume"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_resume", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_resume = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_resume.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cmd_export_callback(self, mock_callback_update, mock_callback_context):
@@ -691,13 +674,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "cmd_export"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_export", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_export = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_export.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_cmd_help_callback(self, mock_callback_update, mock_callback_context):
@@ -707,13 +689,12 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "cmd_help"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_help", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_help = AsyncMock()
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_handlers.cmd_help.assert_called_once()
+            mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_pnl_period_selection(self, mock_callback_update, mock_callback_context):
@@ -742,9 +723,9 @@ class TestCallbackCommandExecution:
         mock_callback_update.callback_query.data = "perf_stats"
 
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.menu.handlers") as mock_handlers:
+             patch("app.bot.handlers.cmd_stats", new_callable=AsyncMock) as mock_cmd:
             mock_bot.is_valid_chat.return_value = True
-            mock_handlers.cmd_stats = AsyncMock(side_effect=Exception("Test error"))
+            mock_cmd.side_effect = Exception("Test error")
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
