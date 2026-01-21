@@ -4,6 +4,7 @@ Telegram Service
 Handles sending trade notifications and daily reports to Telegram.
 """
 
+import asyncio
 import io
 import logging
 import re
@@ -556,19 +557,34 @@ class TelegramService:
         return buf
 
     def _split_message(self, text: str, max_length: int = 4096) -> list[str]:
-        """Split a long message into chunks that fit Telegram's limit."""
+        """Split a long message into chunks that fit Telegram's limit.
+
+        Keeps 2-line entries (like trade details) together to avoid
+        splitting in the middle of an entry.
+        """
         if len(text) <= max_length:
             return [text]
 
         chunks = []
         current_chunk = ""
-        for line in text.split('\n'):
-            if len(current_chunk) + len(line) + 1 > max_length:
+        lines = text.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            # Group detail lines (start with │ or spaces) with their parent
+            block = line
+            if i + 1 < len(lines) and (lines[i + 1].startswith('│') or lines[i + 1].startswith('   ')):
+                block = line + '\n' + lines[i + 1]
+                i += 1
+
+            if len(current_chunk) + len(block) + 1 > max_length:
                 if current_chunk:
                     chunks.append(current_chunk)
-                current_chunk = line
+                current_chunk = block
             else:
-                current_chunk = current_chunk + '\n' + line if current_chunk else line
+                current_chunk = current_chunk + '\n' + block if current_chunk else block
+            i += 1
+
         if current_chunk:
             chunks.append(current_chunk)
         return chunks
@@ -576,7 +592,7 @@ class TelegramService:
     async def send_message(self, text: str) -> bool:
         """
         Send a message to the configured Telegram channel.
-        Automatically splits long messages into chunks.
+        Automatically splits long messages into chunks with delay to avoid rate limiting.
 
         Args:
             text: Message text
@@ -590,12 +606,18 @@ class TelegramService:
 
         try:
             chunks = self._split_message(text)
-            for chunk in chunks:
-                await self.bot.send_message(
-                    chat_id=settings.telegram_channel_id,
-                    text=chunk,
-                    parse_mode=None,  # Plain text for better formatting
-                )
+            for i, chunk in enumerate(chunks):
+                try:
+                    await self.bot.send_message(
+                        chat_id=settings.telegram_channel_id,
+                        text=chunk,
+                        parse_mode=None,  # Plain text for better formatting
+                    )
+                    # Add delay between chunks to avoid Telegram rate limiting
+                    if i < len(chunks) - 1:
+                        await asyncio.sleep(0.5)
+                except TelegramError as e:
+                    logger.error(f"Failed to send chunk {i+1}/{len(chunks)}: {e}")
             logger.info("Telegram message sent successfully")
             return True
         except TelegramError as e:
@@ -608,7 +630,7 @@ class TelegramService:
     async def send_to_signals_channel(self, text: str) -> bool:
         """
         Send a message to the signals-only channel.
-        Automatically splits long messages into chunks.
+        Automatically splits long messages into chunks with delay to avoid rate limiting.
 
         Args:
             text: Message text
@@ -625,12 +647,18 @@ class TelegramService:
 
         try:
             chunks = self._split_message(text)
-            for chunk in chunks:
-                await self.bot.send_message(
-                    chat_id=signals_channel_id,
-                    text=chunk,
-                    parse_mode=None,
-                )
+            for i, chunk in enumerate(chunks):
+                try:
+                    await self.bot.send_message(
+                        chat_id=signals_channel_id,
+                        text=chunk,
+                        parse_mode=None,
+                    )
+                    # Add delay between chunks to avoid Telegram rate limiting
+                    if i < len(chunks) - 1:
+                        await asyncio.sleep(0.5)
+                except TelegramError as e:
+                    logger.error(f"Failed to send signals chunk {i+1}/{len(chunks)}: {e}")
             logger.info("Telegram message sent to signals channel")
             return True
         except TelegramError as e:
