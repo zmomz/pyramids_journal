@@ -887,19 +887,29 @@ class Database:
         peak = starting_equity
         max_dd = 0.0
 
+        # Track PnL separately for percentage calculation (relative to peak PnL)
+        pnl = cumulative_pnl_before
+        peak_pnl = cumulative_pnl_before
+
         for row in rows:
-            equity += row["total_pnl_usdt"] or 0
+            trade_pnl = row["total_pnl_usdt"] or 0
+            equity += trade_pnl
+            pnl += trade_pnl
+
             if equity > peak:
                 peak = equity
+            if pnl > peak_pnl:
+                peak_pnl = pnl
+
             dd = peak - equity
             if dd > max_dd:
                 max_dd = dd
 
         current_dd = peak - equity
 
-        # Calculate percentage relative to peak (realistic account view)
-        if peak > 0:
-            max_dd_percent = (max_dd / peak * 100)
+        # Calculate percentage relative to peak PnL (matches visual on chart)
+        if peak_pnl > 0:
+            max_dd_percent = (max_dd / peak_pnl * 100)
         else:
             max_dd_percent = 0.0
 
