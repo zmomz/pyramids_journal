@@ -352,6 +352,11 @@ class TelegramService:
         # Extract data
         timestamps = [p.timestamp for p in equity_points]
         cumulative_pnls = [p.cumulative_pnl for p in equity_points]
+
+        # Determine if single day or period report for dynamic labels
+        is_single_date = bool(re.match(r"^\d{4}-\d{2}-\d{2}$", date))
+        pnl_label = "Today's PnL" if is_single_date else "Period PnL"
+        progression_label = "Today's PnL Progression" if is_single_date else "PnL Progression"
         final_pnl = cumulative_pnls[-1]
 
         # Determine color based on final PnL
@@ -423,7 +428,7 @@ class TelegramService:
         # Title in header (no overlap now)
         ax_header.text(0.18, 0.65, 'Equity Curve', transform=ax_header.transAxes,
                        fontsize=20, color='white', fontweight='bold', va='center')
-        ax_header.text(0.18, 0.25, f"Today's PnL Progression (USDT) - {date}",
+        ax_header.text(0.18, 0.25, f"{progression_label} (USDT) - {date}",
                        transform=ax_header.transAxes, fontsize=11, color='#888888', va='center')
 
         # Style the spines
@@ -437,7 +442,7 @@ class TelegramService:
 
         # Add final value annotation (only the last point)
         sign = '+' if final_pnl >= 0 else ''
-        annotation_text = f"Today's PnL: {sign}${final_pnl:,.2f}"
+        annotation_text = f"{pnl_label}: {sign}${final_pnl:,.2f}"
 
         ax.annotate(
             annotation_text,
@@ -480,7 +485,7 @@ class TelegramService:
             # Trade counts: O=Opened today, C=Closed today, S=Still open from before
             trade_counts_str = f"O:{chart_stats.trades_opened_today} C:{chart_stats.trades_closed_today} S:{chart_stats.trades_still_open}"
             row1_stats = [
-                ("Today's PnL (USDT)", f'{"+$" if chart_stats.total_net_pnl >= 0 else "-$"}{abs(chart_stats.total_net_pnl):,.2f}'),
+                (f"{pnl_label} (USDT)", f'{"+$" if chart_stats.total_net_pnl >= 0 else "-$"}{abs(chart_stats.total_net_pnl):,.2f}'),
                 ('Max Drawdown (%)', f'{chart_stats.max_drawdown_percent:.2f}%'),
                 ('Trades (O/C/S)', trade_counts_str),
                 ('Win Rate (%)', f'{chart_stats.win_rate:.2f}%'),
