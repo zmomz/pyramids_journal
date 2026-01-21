@@ -204,6 +204,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         /report YYYY-MM-DD - Report for specific date
         /report weekly - Last 7 days
         /report monthly - Last 30 days
+        /report all - All-time report
     """
     from ..services.report_service import report_service
     from ..services.telegram_service import telegram_service
@@ -235,6 +236,9 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         elif period == "monthly":
             # Last 30 days
             report = await generate_period_report(30)
+        elif period == "all":
+            # All-time report
+            report = await generate_period_report(None)
         else:
             await update.message.reply_text(
                 "Usage:\n"
@@ -242,7 +246,8 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 "/report today - Today's trades\n"
                 "/report 2026-01-20 - Specific date\n"
                 "/report weekly - Last 7 days\n"
-                "/report monthly - Last 30 days"
+                "/report monthly - Last 30 days\n"
+                "/report all - All-time report"
             )
             return
 
@@ -281,24 +286,37 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(f"❌ Error generating report: {e}")
 
 
-async def generate_period_report(days: int):
-    """Generate report for a period of days."""
+async def generate_period_report(days: int | None):
+    """Generate report for a period of days, or all-time if days is None."""
     from ..models import DailyReportData
     from collections import defaultdict
 
-    end_date = datetime.now(UTC)
-    start_date = end_date - timedelta(days=days)
+    if days is not None:
+        # Specific period
+        end_date = datetime.now(UTC)
+        start_date = end_date - timedelta(days=days)
+        cursor = await db.connection.execute(
+            """
+            SELECT * FROM trades
+            WHERE status = 'closed' AND closed_at >= ?
+            """,
+            (start_date.isoformat(),)
+        )
+        period_label = f"Last {days} days"
+    else:
+        # All-time
+        cursor = await db.connection.execute(
+            """
+            SELECT * FROM trades
+            WHERE status = 'closed'
+            """
+        )
+        period_label = "All-Time"
 
-    cursor = await db.connection.execute(
-        """
-        SELECT * FROM trades
-        WHERE status = 'closed' AND closed_at >= ?
-        """,
-        (start_date.isoformat(),)
-    )
-    trades = await cursor.fetchall()
+    rows = await cursor.fetchall()
+    trades = [dict(row) for row in rows]  # Convert sqlite3.Row to dict
 
-    total_pnl = sum(t['total_pnl_usdt'] or 0 for t in trades)
+    total_pnl = sum(t.get('total_pnl_usdt') or 0 for t in trades)
     total_capital = 0.0
     total_pyramids = 0
     by_exchange = defaultdict(lambda: {"pnl": 0, "trades": 0})
@@ -309,20 +327,22 @@ async def generate_period_report(days: int):
         pyramids = await db.get_pyramids_for_trade(trade['id'])
         total_pyramids += len(pyramids)
         for p in pyramids:
-            total_capital += p.get('capital_usdt', 0) or 0
+            p_dict = dict(p) if hasattr(p, 'keys') else p
+            total_capital += p_dict.get('capital_usdt', 0) or 0
 
-        by_exchange[trade['exchange']]['pnl'] += trade['total_pnl_usdt'] or 0
+        pnl = trade.get('total_pnl_usdt') or 0
+        by_exchange[trade['exchange']]['pnl'] += pnl
         by_exchange[trade['exchange']]['trades'] += 1
 
         timeframe = trade.get('timeframe') or 'unknown'
-        by_timeframe[timeframe]['pnl'] += trade['total_pnl_usdt'] or 0
+        by_timeframe[timeframe]['pnl'] += pnl
         by_timeframe[timeframe]['trades'] += 1
 
         pair = f"{trade['base']}/{trade['quote']}"
-        by_pair[pair] += trade['total_pnl_usdt'] or 0
+        by_pair[pair] += pnl
 
     return DailyReportData(
-        date=f"Last {days} days",
+        date=period_label,
         total_trades=len(trades),
         total_pyramids=total_pyramids,
         total_pnl_usdt=total_pnl,

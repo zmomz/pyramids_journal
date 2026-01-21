@@ -276,7 +276,14 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
         # Performance commands - execute and send result as new message
         elif data == "perf_report":
             period = get_user_period(chat_id, "performance")
-            context.args = ["today"] if period == "today" else (["weekly"] if period == "week" else ["monthly"] if period == "month" else [])
+            # Map menu periods to report command args
+            period_map = {
+                "today": ["today"],
+                "week": ["weekly"],
+                "month": ["monthly"],
+                "all": ["all"],
+            }
+            context.args = period_map.get(period, ["all"])
             await _execute_command_from_callback(query, context, handlers.cmd_report)
 
         elif data == "perf_stats":
