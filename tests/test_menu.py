@@ -578,33 +578,59 @@ class TestCallbackCommandExecution:
 
     @pytest.mark.asyncio
     async def test_settings_timezone_callback(self, mock_callback_update, mock_callback_context):
-        """Test settings_timezone callback executes timezone command."""
+        """Test settings_timezone callback shows timezone menu."""
         from app.bot.menu import menu_callback_handler
 
         mock_callback_update.callback_query.data = "settings_timezone"
 
+        # Mock cursor that returns None (no DB value, fallback to settings)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.handlers.cmd_timezone", new_callable=AsyncMock) as mock_cmd:
+             patch("app.database.db") as mock_db, \
+             patch("app.config.settings") as mock_settings:
             mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+            mock_settings.timezone = "UTC"
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_cmd.assert_called_once()
+            # Verify menu is shown via edit_message_text
+            mock_callback_update.callback_query.edit_message_text.assert_called_once()
+            call_args = mock_callback_update.callback_query.edit_message_text.call_args
+            assert "Timezone" in call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_settings_reporttime_callback(self, mock_callback_update, mock_callback_context):
-        """Test settings_reporttime callback executes reporttime command."""
+        """Test settings_reporttime callback shows reporttime menu."""
         from app.bot.menu import menu_callback_handler
 
         mock_callback_update.callback_query.data = "settings_reporttime"
 
+        # Mock cursor that returns None (no DB value, fallback to settings)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
         with patch("app.bot.menu._bot") as mock_bot, \
-             patch("app.bot.handlers.cmd_reporttime", new_callable=AsyncMock) as mock_cmd:
+             patch("app.database.db") as mock_db, \
+             patch("app.config.settings") as mock_settings:
             mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
+            mock_settings.daily_report_time = "12:00"
 
             await menu_callback_handler(mock_callback_update, mock_callback_context)
 
-            mock_cmd.assert_called_once()
+            # Verify menu is shown via edit_message_text
+            mock_callback_update.callback_query.edit_message_text.assert_called_once()
+            call_args = mock_callback_update.callback_query.edit_message_text.call_args
+            assert "Report Time" in call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_settings_fees_callback(self, mock_callback_update, mock_callback_context):

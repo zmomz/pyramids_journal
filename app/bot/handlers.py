@@ -872,32 +872,61 @@ async def cmd_setfee(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 @channel_only
 async def cmd_timezone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """View or set timezone."""
+    from ..services.report_service import report_service
+
     if not context.args:
-        await update.message.reply_text(f"🕐 Current timezone: {settings.timezone}")
+        # Read from DB first, fallback to settings
+        cursor = await db.connection.execute(
+            "SELECT value FROM settings WHERE key = 'timezone'"
+        )
+        row = await cursor.fetchone()
+        current_tz = row["value"] if row else settings.timezone
+        await update.message.reply_text(f"🌍 Timezone: {current_tz}")
         return
 
     try:
         import pytz
-        tz = context.args[0]
-        pytz.timezone(tz)  # Validate timezone
+        tz_str = context.args[0]
+        pytz.timezone(tz_str)  # Validate timezone
 
         await db.connection.execute(
             "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
-            ("timezone", tz, datetime.now(UTC).isoformat())
+            ("timezone", tz_str, datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
 
-        await update.message.reply_text(f"✅ Timezone set to: {tz}")
+        # Get current report time from DB to reschedule with new timezone
+        cursor = await db.connection.execute(
+            "SELECT value FROM settings WHERE key = 'daily_report_time'"
+        )
+        row = await cursor.fetchone()
+        current_time = row["value"] if row else settings.daily_report_time
 
+        # Apply immediately by rescheduling with new timezone
+        await report_service.reschedule_daily_report(current_time, tz_str)
+
+        await update.message.reply_text(f"✅ Timezone set to: {tz_str}")
+
+    except pytz.UnknownTimeZoneError:
+        await update.message.reply_text("❌ Invalid timezone. Example: America/New_York, Asia/Tokyo")
     except Exception as e:
-        await update.message.reply_text(f"❌ Invalid timezone. Example: Asia/Riyadh")
+        logger.error(f"Error in /timezone: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
 
 
 @channel_only
 async def cmd_reporttime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """View or set daily report time."""
+    from ..services.report_service import report_service
+
     if not context.args:
-        await update.message.reply_text(f"🕐 Daily report time: {settings.daily_report_time}")
+        # Read from DB first, fallback to settings
+        cursor = await db.connection.execute(
+            "SELECT value FROM settings WHERE key = 'daily_report_time'"
+        )
+        row = await cursor.fetchone()
+        current_time = row["value"] if row else settings.daily_report_time
+        await update.message.reply_text(f"🕐 Daily report time: {current_time}")
         return
 
     try:
@@ -910,6 +939,9 @@ async def cmd_reporttime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             ("daily_report_time", time_str, datetime.now(UTC).isoformat())
         )
         await db.connection.commit()
+
+        # Apply immediately by rescheduling
+        await report_service.reschedule_daily_report(time_str)
 
         await update.message.reply_text(f"✅ Report time set to: {time_str}")
 

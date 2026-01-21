@@ -71,6 +71,41 @@ class ReportService:
             self._scheduler.shutdown()
             logger.info("Report scheduler stopped")
 
+    async def reschedule_daily_report(
+        self, new_time: str, new_timezone: str | None = None
+    ) -> None:
+        """Reschedule the daily report with new time/timezone.
+
+        Args:
+            new_time: Time string in HH:MM format
+            new_timezone: Optional timezone string (uses current setting if not provided)
+        """
+        if not self._scheduler or not self._scheduler.running:
+            logger.warning("Scheduler not running, cannot reschedule")
+            return
+
+        try:
+            hour, minute = map(int, new_time.split(":"))
+        except ValueError:
+            logger.error(f"Invalid time format: {new_time}")
+            return
+
+        # Use provided timezone or current setting
+        tz_str = new_timezone or settings.timezone
+        tz = pytz.timezone(tz_str)
+
+        # Remove existing job and add with new schedule
+        self._scheduler.remove_job("daily_report")
+        trigger = CronTrigger(hour=hour, minute=minute, timezone=tz)
+        self._scheduler.add_job(
+            self.generate_and_send_daily_report,
+            trigger=trigger,
+            id="daily_report",
+            replace_existing=True,
+        )
+
+        logger.info(f"Rescheduled daily report to {hour:02d}:{minute:02d} {tz_str}")
+
     async def generate_daily_report(self, date: str | None = None) -> DailyReportData:
         """
         Generate daily report for a specific date.

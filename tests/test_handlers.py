@@ -924,9 +924,18 @@ class TestCmdTimezone:
 
         mock_context.args = []
 
+        # Mock cursor that returns None (no DB value, fallback to settings)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
         with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db, \
              patch("app.bot.handlers.settings") as mock_settings:
             mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
             mock_settings.timezone = "UTC"
 
             await cmd_timezone(mock_update, mock_context)
@@ -981,9 +990,18 @@ class TestCmdReporttime:
 
         mock_context.args = []
 
+        # Mock cursor that returns None (no DB value, fallback to settings)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+
+        mock_connection = MagicMock()
+        mock_connection.execute = AsyncMock(return_value=mock_cursor)
+
         with patch("app.bot.handlers._bot") as mock_bot, \
+             patch("app.bot.handlers.db") as mock_db, \
              patch("app.bot.handlers.settings") as mock_settings:
             mock_bot.is_valid_chat.return_value = True
+            mock_db.connection = mock_connection
             mock_settings.daily_report_time = "12:00"
 
             await cmd_reporttime(mock_update, mock_context)

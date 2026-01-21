@@ -131,6 +131,60 @@ def get_settings_menu() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
+def get_reporttime_menu(current_time: str) -> InlineKeyboardMarkup:
+    """Create report time selection menu."""
+    common_times = [
+        ("🌅 08:00", "08:00"),
+        ("☀️ 12:00", "12:00"),
+        ("🌆 18:00", "18:00"),
+        ("🌙 00:00", "00:00"),
+    ]
+
+    keyboard = []
+    row = []
+    for label, time_val in common_times:
+        # Mark current time with checkmark
+        display = f"✓ {label}" if time_val == current_time else label
+        row.append(InlineKeyboardButton(display, callback_data=f"reporttime_{time_val}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    keyboard.append([InlineKeyboardButton("← Back", callback_data="menu_settings")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_timezone_menu(current_tz: str) -> InlineKeyboardMarkup:
+    """Create timezone selection menu."""
+    common_timezones = [
+        ("🇺🇸 New York", "America/New_York"),
+        ("🇬🇧 London", "Europe/London"),
+        ("🇸🇦 Riyadh", "Asia/Riyadh"),
+        ("🇦🇪 Dubai", "Asia/Dubai"),
+        ("🇮🇳 Mumbai", "Asia/Kolkata"),
+        ("🇸🇬 Singapore", "Asia/Singapore"),
+        ("🇯🇵 Tokyo", "Asia/Tokyo"),
+        ("🇦🇺 Sydney", "Australia/Sydney"),
+    ]
+
+    keyboard = []
+    row = []
+    for label, tz_val in common_timezones:
+        # Mark current timezone with checkmark
+        display = f"✓ {label}" if tz_val == current_tz else label
+        row.append(InlineKeyboardButton(display, callback_data=f"timezone_{tz_val}"))
+        if len(row) == 2:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    keyboard.append([InlineKeyboardButton("← Back", callback_data="menu_settings")])
+    return InlineKeyboardMarkup(keyboard)
+
+
 # ============== Menu State ==============
 
 # Store selected periods per user (chat_id -> {'performance': 'all', 'pnl': 'all'})
@@ -340,12 +394,99 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
         # Settings commands
         elif data == "settings_timezone":
-            context.args = []
-            await _execute_command_from_callback(query, context, handlers.cmd_timezone)
+            # Show timezone menu instead of just viewing
+            from ..database import db
+            from ..config import settings
+            cursor = await db.connection.execute(
+                "SELECT value FROM settings WHERE key = 'timezone'"
+            )
+            row = await cursor.fetchone()
+            current_tz = row["value"] if row else settings.timezone
+
+            await query.edit_message_text(
+                f"🌍 Timezone\n━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Current: {current_tz}\n\n"
+                f"Select a timezone or use:\n`/timezone <tz>` for custom",
+                reply_markup=get_timezone_menu(current_tz),
+                parse_mode="Markdown"
+            )
 
         elif data == "settings_reporttime":
-            context.args = []
-            await _execute_command_from_callback(query, context, handlers.cmd_reporttime)
+            # Show report time menu instead of just viewing
+            from ..database import db
+            from ..config import settings
+            cursor = await db.connection.execute(
+                "SELECT value FROM settings WHERE key = 'daily_report_time'"
+            )
+            row = await cursor.fetchone()
+            current_time = row["value"] if row else settings.daily_report_time
+
+            await query.edit_message_text(
+                f"📅 Daily Report Time\n━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Current: {current_time}\n\n"
+                f"Select a new time or use:\n`/reporttime HH:MM` for custom time",
+                reply_markup=get_reporttime_menu(current_time),
+                parse_mode="Markdown"
+            )
+
+        elif data.startswith("reporttime_"):
+            # Handle report time selection
+            from ..database import db
+            from ..config import settings
+            from ..services.report_service import report_service
+            from datetime import datetime, UTC
+
+            new_time = data.replace("reporttime_", "")
+
+            # Save to database
+            await db.connection.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                ("daily_report_time", new_time, datetime.now(UTC).isoformat())
+            )
+            await db.connection.commit()
+
+            # Apply immediately
+            await report_service.reschedule_daily_report(new_time)
+
+            # Update menu to show new selection
+            await query.edit_message_text(
+                f"✅ Report time updated to: {new_time}\n\n"
+                f"Daily reports will now be sent at {new_time}",
+                reply_markup=get_reporttime_menu(new_time)
+            )
+
+        elif data.startswith("timezone_"):
+            # Handle timezone selection
+            from ..database import db
+            from ..config import settings
+            from ..services.report_service import report_service
+            from datetime import datetime, UTC
+
+            new_tz = data.replace("timezone_", "")
+
+            # Save to database
+            await db.connection.execute(
+                "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                ("timezone", new_tz, datetime.now(UTC).isoformat())
+            )
+            await db.connection.commit()
+
+            # Get current report time to reschedule with new timezone
+            cursor = await db.connection.execute(
+                "SELECT value FROM settings WHERE key = 'daily_report_time'"
+            )
+            row = await cursor.fetchone()
+            current_time = row["value"] if row else settings.daily_report_time
+
+            # Apply immediately
+            await report_service.reschedule_daily_report(current_time, new_tz)
+
+            # Update menu to show new selection
+            await query.edit_message_text(
+                f"✅ Timezone updated to: {new_tz}\n\n"
+                f"Daily reports will use this timezone.",
+                reply_markup=get_timezone_menu(new_tz)
+            )
 
         elif data == "settings_fees":
             context.args = []
