@@ -1505,14 +1505,17 @@ class TestSendDailyReport:
 
     @pytest.mark.asyncio
     async def test_send_daily_report_without_equity_curve(self):
-        """Test sending daily report without equity curve."""
+        """Test sending daily report without equity curve.
+
+        Daily reports are sent to main channel only (not signals channel).
+        """
         from app.services.telegram_service import TelegramService
         from app.models import DailyReportData
 
         service = TelegramService()
 
         with patch("app.services.telegram_service.settings") as mock_settings, \
-             patch.object(service, "send_signal_message", new_callable=AsyncMock) as mock_send:
+             patch.object(service, "send_message", new_callable=AsyncMock) as mock_send:
 
             mock_settings.timezone = "UTC"
             mock_settings.equity_curve_enabled = False
@@ -1537,7 +1540,10 @@ class TestSendDailyReport:
 
     @pytest.mark.asyncio
     async def test_send_daily_report_with_equity_curve(self):
-        """Test sending daily report with equity curve enabled."""
+        """Test sending daily report with equity curve enabled.
+
+        Daily reports and charts are sent to main channel only (not signals channel).
+        """
         import io
         from app.services.telegram_service import TelegramService
         from app.models import DailyReportData, EquityPoint
@@ -1545,10 +1551,9 @@ class TestSendDailyReport:
         service = TelegramService()
 
         with patch("app.services.telegram_service.settings") as mock_settings, \
-             patch.object(service, "send_signal_message", new_callable=AsyncMock) as mock_send, \
+             patch.object(service, "send_message", new_callable=AsyncMock) as mock_send, \
              patch.object(service, "generate_equity_curve_image") as mock_gen_chart, \
-             patch.object(service, "send_photo_to_channel", new_callable=AsyncMock) as mock_send_photo, \
-             patch.object(service, "send_photo_to_signals_channel", new_callable=AsyncMock) as mock_send_photo_signals:
+             patch.object(service, "send_photo_to_channel", new_callable=AsyncMock) as mock_send_photo:
 
             mock_settings.timezone = "UTC"
             mock_settings.equity_curve_enabled = True
@@ -1558,7 +1563,6 @@ class TestSendDailyReport:
             mock_send.return_value = True
             mock_gen_chart.return_value = io.BytesIO(b"fake chart")
             mock_send_photo.return_value = True
-            mock_send_photo_signals.return_value = True
 
             data = DailyReportData(
                 date="2026-01-20",
@@ -1580,19 +1584,21 @@ class TestSendDailyReport:
 
             assert result is True
             mock_gen_chart.assert_called_once()
-            mock_send_photo.assert_called_once()
-            mock_send_photo_signals.assert_called_once()
+            mock_send_photo.assert_called_once()  # Only main channel
 
     @pytest.mark.asyncio
     async def test_send_daily_report_equity_curve_no_data(self):
-        """Test sending daily report when equity curve has no data."""
+        """Test sending daily report when equity curve has no data.
+
+        Daily reports are sent to main channel only (not signals channel).
+        """
         from app.services.telegram_service import TelegramService
         from app.models import DailyReportData
 
         service = TelegramService()
 
         with patch("app.services.telegram_service.settings") as mock_settings, \
-             patch.object(service, "send_signal_message", new_callable=AsyncMock) as mock_send, \
+             patch.object(service, "send_message", new_callable=AsyncMock) as mock_send, \
              patch.object(service, "generate_equity_curve_image") as mock_gen_chart:
 
             mock_settings.timezone = "UTC"

@@ -736,7 +736,8 @@ class TelegramService:
 
     async def send_daily_report(self, data: DailyReportData) -> bool:
         """
-        Send daily report notification to both channels.
+        Send daily report notification to main channel only.
+        Signals channel only receives entry/exit signals, not reports.
         Includes equity curve chart if enabled and data is available.
 
         Args:
@@ -748,24 +749,18 @@ class TelegramService:
         message = self.format_daily_report_message(data)
 
         # Generate and send equity curve if enabled and has data
-        chart_sent = False
         if settings.equity_curve_enabled and data.equity_points:
             chart_image = self.generate_equity_curve_image(
                 data.equity_points, data.date, data.chart_stats
             )
             if chart_image:
-                # Send chart to main channel
+                # Send chart to main channel only
                 if self.is_enabled:
                     await self.send_photo_to_channel(chart_image)
-                    chart_image.seek(0)  # Reset buffer position for reuse
+                    logger.info("Equity curve chart sent successfully")
 
-                # Send chart to signals channel
-                await self.send_photo_to_signals_channel(chart_image)
-                chart_sent = True
-                logger.info("Equity curve chart sent successfully")
-
-        # Send the text report
-        return await self.send_signal_message(message)
+        # Send the text report to main channel only
+        return await self.send_message(message)
 
 
 # Singleton instance
