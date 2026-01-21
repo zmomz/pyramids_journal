@@ -144,6 +144,7 @@ async def webhook(
 
     # Return response
     if not result.success:
+        logger.warning(f"Signal processing failed: {result.message} (error={result.error})")
         return WebhookResponse(
             success=False,
             message=result.message,

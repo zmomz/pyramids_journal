@@ -1260,6 +1260,38 @@ class Database:
         counts.update(await self.reset_cache())
         return counts
 
+    async def cleanup_orphan_trades(self) -> int:
+        """
+        Delete orphan trades (trades with 0 pyramids).
+
+        These occur when validation fails after trade creation.
+        Returns the number of deleted trades.
+        """
+        # Find orphan trade IDs (open trades with no pyramids)
+        cursor = await self.connection.execute(
+            """
+            SELECT t.id FROM trades t
+            LEFT JOIN pyramids p ON t.id = p.trade_id
+            WHERE t.status = 'open'
+            GROUP BY t.id
+            HAVING COUNT(p.id) = 0
+            """
+        )
+        orphan_ids = [row[0] for row in await cursor.fetchall()]
+
+        if not orphan_ids:
+            return 0
+
+        # Delete orphan trades
+        placeholders = ",".join("?" * len(orphan_ids))
+        await self.connection.execute(
+            f"DELETE FROM trades WHERE id IN ({placeholders})",
+            orphan_ids
+        )
+        await self.connection.commit()
+
+        return len(orphan_ids)
+
 
 # Global database instance
 db = Database()

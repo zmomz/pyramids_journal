@@ -114,6 +114,9 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             trade = dict(row)
             # Get pyramids for this trade
             pyramids = await db.get_pyramids_for_trade(trade['id'])
+            # Skip orphan trades (no pyramids due to validation failure)
+            if not pyramids:
+                continue
             trade['pyramids'] = pyramids
             open_trades.append(trade)
 
@@ -1387,6 +1390,67 @@ Database is now clean."""
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@channel_only
+async def cmd_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clean up orphan trades (trades with 0 pyramids).
+
+    These orphan trades occur when validation fails after trade creation.
+
+    Usage:
+        /cleanup - Show how many orphan trades exist
+        /cleanup CONFIRM - Delete orphan trades
+    """
+    try:
+        args = context.args if context.args else []
+
+        # Count orphan trades
+        cursor = await db.connection.execute(
+            """
+            SELECT COUNT(*) FROM trades t
+            LEFT JOIN pyramids p ON t.id = p.trade_id
+            WHERE t.status = 'open'
+            GROUP BY t.id
+            HAVING COUNT(p.id) = 0
+            """
+        )
+        rows = await cursor.fetchall()
+        orphan_count = len(rows)
+
+        if not args:
+            if orphan_count == 0:
+                await update.message.reply_text(
+                    "✅ No orphan trades found.\n\n"
+                    "All open trades have pyramids."
+                )
+            else:
+                await update.message.reply_text(
+                    f"🧹 Found {orphan_count} orphan trades\n\n"
+                    "These are trades with 0 pyramids (validation failed).\n\n"
+                    "To delete them, run:\n"
+                    "`/cleanup CONFIRM`"
+                )
+            return
+
+        if args[0].upper() != "CONFIRM":
+            await update.message.reply_text(
+                "❌ Please add CONFIRM to execute cleanup:\n"
+                "`/cleanup CONFIRM`"
+            )
+            return
+
+        # Execute cleanup
+        deleted = await db.cleanup_orphan_trades()
+        await update.message.reply_text(
+            f"✅ Cleaned up {deleted} orphan trades\n\n"
+            "These trades had no pyramids due to validation failures."
+        )
+        logger.info(f"Cleaned up {deleted} orphan trades")
+
+    except Exception as e:
+        logger.error(f"Error in /cleanup: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 def setup_handlers(app: Application, bot) -> None:
     """Register all command handlers."""
     global _bot
@@ -1428,6 +1492,7 @@ def setup_handlers(app: Application, bot) -> None:
     # Export & Data Management
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("help", cmd_help))
 
-    logger.info("Registered 24 bot command handlers")
+    logger.info("Registered 25 bot command handlers")

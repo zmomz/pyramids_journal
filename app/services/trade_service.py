@@ -91,10 +91,12 @@ class TradeService:
 
         # Determine if entry or exit
         if alert.is_entry():
+            logger.info(f"Processing ENTRY signal for {parsed.base}/{parsed.quote} on {exchange}")
             return await cls._process_entry(
                 alert, exchange, parsed, received_timestamp
             )
         elif alert.is_exit():
+            logger.info(f"Processing EXIT signal for {parsed.base}/{parsed.quote} on {exchange}")
             return await cls._process_exit(
                 alert, exchange, parsed, received_timestamp
             )
@@ -133,7 +135,7 @@ class TradeService:
                 error="PRICE_FETCH_FAILED",
             ), None
 
-        # Get or create trade with timeframe-aware grouping (need pyramid_index first)
+        # Check for existing trade (but don't create yet - validate first)
         trade = await db.get_open_trade_by_group(
             exchange, parsed.base, parsed.quote, alert.timeframe
         )
@@ -141,11 +143,11 @@ class TradeService:
         if trade:
             trade_id = trade["id"]
             group_id = trade["group_id"]
-            # Get existing pyramids to determine index (0-based)
             existing_pyramids = await db.get_pyramids_for_trade(trade_id)
             pyramid_index = len(existing_pyramids)
+            is_new_trade = False
         else:
-            # Create new trade with new group ID
+            # Prepare new trade info but don't create until validation passes
             sequence = await db.get_next_group_sequence(
                 parsed.base, exchange, alert.timeframe
             )
@@ -153,20 +155,8 @@ class TradeService:
                 parsed.base, exchange, alert.timeframe, sequence
             )
             trade_id = str(uuid.uuid4())
-
-            await db.create_trade_with_group(
-                trade_id=trade_id,
-                group_id=group_id,
-                exchange=exchange,
-                base=parsed.base,
-                quote=parsed.quote,
-                timeframe=alert.timeframe,
-                position_side=alert.position_side,
-            )
             pyramid_index = 0
-            logger.info(
-                f"Created new trade {trade_id} with group {group_id}"
-            )
+            is_new_trade = True
 
         # Get capital setting for this specific pyramid (exact match or default $1000)
         capital_usd = await db.get_pyramid_capital(
@@ -196,7 +186,7 @@ class TradeService:
             f"{position_size} {parsed.base} (precision: {qty_precision})"
         )
 
-        # Validate order if strict mode
+        # Validate order BEFORE creating trade (prevents orphan trades with 0 pyramids)
         if settings.validation_mode == "strict":
             is_valid, error_msg = await exchange_service.validate_order(
                 exchange, parsed.base, parsed.quote, position_size, current_price
@@ -208,6 +198,19 @@ class TradeService:
                     message=error_msg,
                     error="VALIDATION_FAILED",
                 ), None
+
+        # NOW create trade if it's new (validation passed)
+        if is_new_trade:
+            await db.create_trade_with_group(
+                trade_id=trade_id,
+                group_id=group_id,
+                exchange=exchange,
+                base=parsed.base,
+                quote=parsed.quote,
+                timeframe=alert.timeframe,
+                position_side=alert.position_side,
+            )
+            logger.info(f"Created new trade {trade_id} with group {group_id}")
 
         # Calculate fees
         fee_rate = exchange_config.get_fee_rate(exchange)
@@ -277,6 +280,10 @@ class TradeService:
         )
 
         if not trade:
+            logger.warning(
+                f"Exit signal ignored: No open trade for {parsed.base}/{parsed.quote} "
+                f"({alert.timeframe}) on {exchange}"
+            )
             return TradeResult(
                 success=False,
                 message=(
