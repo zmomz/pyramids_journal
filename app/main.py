@@ -6,7 +6,9 @@ capturing exchange prices, and reporting via Telegram.
 """
 
 import logging
+from logging.handlers import RotatingFileHandler
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Header, Request
@@ -22,11 +24,38 @@ from .services.report_service import report_service
 from .services.symbol_normalizer import parse_symbol
 from .bot.bot import telegram_bot
 
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper()),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+
+def setup_logging() -> None:
+    """Configure logging with console and persistent file handlers."""
+    log_level = getattr(logging, settings.log_level.upper())
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    formatter = logging.Formatter(log_format)
+
+    # Root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Console handler (for docker logs)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # File handler - persisted in same volume as database
+    log_dir = Path(settings.database_path).parent / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    file_handler = RotatingFileHandler(
+        log_dir / "pyramids.log",
+        maxBytes=10 * 1024 * 1024,  # 10MB per file
+        backupCount=5,  # Keep 5 backups (50MB total)
+        encoding="utf-8",
+    )
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
