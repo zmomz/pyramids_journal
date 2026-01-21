@@ -1372,19 +1372,23 @@ class TestGeneratePeriodReport:
         """Test generating 7-day period report."""
         from app.bot.handlers import generate_period_report
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=[])
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
-            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
+            # Mock all required async db methods
+            mock_db.get_statistics_for_period = AsyncMock(return_value={
+                "total_trades": 0,
+                "total_pnl": 0,
+                "win_rate": 0,
+                "avg_win": 0,
+                "avg_loss": 0,
+                "profit_factor": 0,
+                "best_trade": 0,
+                "worst_trade": 0,
+                "avg_trade": 0,
+            })
 
             report = await generate_period_report(7)
 
-            assert report.date == "Last 7 days"
+            assert report.date == "Last 7 Days"
             assert report.total_trades == 0
 
     @pytest.mark.asyncio
@@ -1392,19 +1396,22 @@ class TestGeneratePeriodReport:
         """Test generating 30-day period report."""
         from app.bot.handlers import generate_period_report
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=[])
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
-            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
+            mock_db.get_statistics_for_period = AsyncMock(return_value={
+                "total_trades": 0,
+                "total_pnl": 0,
+                "win_rate": 0,
+                "avg_win": 0,
+                "avg_loss": 0,
+                "profit_factor": 0,
+                "best_trade": 0,
+                "worst_trade": 0,
+                "avg_trade": 0,
+            })
 
             report = await generate_period_report(30)
 
-            assert report.date == "Last 30 days"
+            assert report.date == "Last 30 Days"
 
 
 class TestCmdExportNoTrades:
@@ -1484,12 +1491,49 @@ class TestCmdStatusLongMessage:
 class TestGeneratePeriodReportWithData:
     """Tests for generate_period_report with actual trade data."""
 
+    def _setup_mock_db(self, mock_db, trades):
+        """Helper to setup mock db with all required async methods."""
+        # Calculate stats from trades
+        total_pnl = sum(t.get("total_pnl_usdt", 0) or 0 for t in trades)
+        wins = [t for t in trades if (t.get("total_pnl_usdt", 0) or 0) > 0]
+        losses = [t for t in trades if (t.get("total_pnl_usdt", 0) or 0) < 0]
+
+        mock_db.get_statistics_for_period = AsyncMock(return_value={
+            "total_trades": len(trades),
+            "total_pnl": total_pnl,
+            "win_rate": len(wins) / len(trades) * 100 if trades else 0,
+            "avg_win": sum(t.get("total_pnl_usdt", 0) or 0 for t in wins) / len(wins) if wins else 0,
+            "avg_loss": sum(t.get("total_pnl_usdt", 0) or 0 for t in losses) / len(losses) if losses else 0,
+            "profit_factor": 1.5,
+            "best_trade": max((t.get("total_pnl_usdt", 0) or 0 for t in trades), default=0),
+            "worst_trade": min((t.get("total_pnl_usdt", 0) or 0 for t in trades), default=0),
+            "avg_trade": total_pnl / len(trades) if trades else 0,
+        })
+        mock_db.get_trades_for_period = AsyncMock(return_value=trades)
+        mock_db.get_pyramids_for_trade = AsyncMock(return_value=[{"capital_usdt": 1000.0}])
+
+        # Build exchange stats from trades
+        exchange_stats = {}
+        for t in trades:
+            ex = t["exchange"]
+            if ex not in exchange_stats:
+                exchange_stats[ex] = {"exchange": ex, "pnl": 0, "trades": 0}
+            exchange_stats[ex]["pnl"] += t.get("total_pnl_usdt", 0) or 0
+            exchange_stats[ex]["trades"] += 1
+        mock_db.get_exchange_stats_for_period = AsyncMock(return_value=list(exchange_stats.values()))
+
+        mock_db.get_equity_curve_data_for_period = AsyncMock(return_value=[])
+        mock_db.get_drawdown_for_period = AsyncMock(return_value={
+            "max_drawdown": 0,
+            "max_drawdown_percent": 0,
+            "current_drawdown": 0,
+        })
+
     @pytest.mark.asyncio
     async def test_generate_period_report_with_trades(self):
         """Test generating period report with trade data."""
         from app.bot.handlers import generate_period_report
 
-        # Use mock data since real sqlite3.Row doesn't have .get() method
         trades = [
             {
                 "id": "trade_1",
@@ -1501,22 +1545,13 @@ class TestGeneratePeriodReportWithData:
             },
         ]
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=trades)
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
-            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
-                {"capital_usdt": 1000.0}
-            ])
+            self._setup_mock_db(mock_db, trades)
 
             report = await generate_period_report(30)
 
             assert report.total_trades == 1
-            assert report.date == "Last 30 days"
+            assert report.date == "Last 30 Days"
             assert isinstance(report.total_pnl_usdt, (int, float))
             assert isinstance(report.by_exchange, dict)
             assert isinstance(report.by_timeframe, dict)
@@ -1526,9 +1561,7 @@ class TestGeneratePeriodReportWithData:
     async def test_generate_period_report_aggregates_by_exchange(self):
         """Test that report correctly aggregates PnL by exchange."""
         from app.bot.handlers import generate_period_report
-        from datetime import datetime, UTC, timedelta
 
-        # Create trades with different exchanges
         trades = [
             {
                 "id": "trade_1",
@@ -1556,17 +1589,8 @@ class TestGeneratePeriodReportWithData:
             },
         ]
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=trades)
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
-            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
-                {"capital_usdt": 1000.0}
-            ])
+            self._setup_mock_db(mock_db, trades)
 
             report = await generate_period_report(7)
 
@@ -1610,17 +1634,8 @@ class TestGeneratePeriodReportWithData:
             },
         ]
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=trades)
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
-            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
-                {"capital_usdt": 1000.0}
-            ])
+            self._setup_mock_db(mock_db, trades)
 
             report = await generate_period_report(7)
 
@@ -1664,17 +1679,8 @@ class TestGeneratePeriodReportWithData:
             },
         ]
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=trades)
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
-            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
-                {"capital_usdt": 1000.0}
-            ])
+            self._setup_mock_db(mock_db, trades)
 
             report = await generate_period_report(7)
 
@@ -1708,14 +1714,8 @@ class TestGeneratePeriodReportWithData:
             },
         ]
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=trades)
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
+            self._setup_mock_db(mock_db, trades)
             mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
 
             report = await generate_period_report(7)
@@ -1739,20 +1739,14 @@ class TestGeneratePeriodReportWithData:
             },
         ]
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=trades)
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
+            self._setup_mock_db(mock_db, trades)
             mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
 
             report = await generate_period_report(7)
 
-            # Should use 'unknown' for missing timeframe
-            assert "unknown" in report.by_timeframe
+            # Should use 'N/A' for missing timeframe (per handlers.py line 349)
+            assert "N/A" in report.by_timeframe
 
     @pytest.mark.asyncio
     async def test_generate_period_report_pnl_percent_calculation(self):
@@ -1770,18 +1764,8 @@ class TestGeneratePeriodReportWithData:
             },
         ]
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=trades)
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
-            # Return pyramid with capital
-            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
-                {"capital_usdt": 1000.0}
-            ])
+            self._setup_mock_db(mock_db, trades)
 
             report = await generate_period_report(7)
 
@@ -1804,14 +1788,8 @@ class TestGeneratePeriodReportWithData:
             },
         ]
 
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall = AsyncMock(return_value=trades)
-
-        mock_connection = MagicMock()
-        mock_connection.execute = AsyncMock(return_value=mock_cursor)
-
         with patch("app.bot.handlers.db") as mock_db:
-            mock_db.connection = mock_connection
+            self._setup_mock_db(mock_db, trades)
             # No pyramids = zero capital
             mock_db.get_pyramids_for_trade = AsyncMock(return_value=[])
 
