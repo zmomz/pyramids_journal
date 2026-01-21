@@ -409,13 +409,16 @@ async def generate_period_report(days: int | None):
         avg_loss = abs(stats["avg_loss"]) if stats["avg_loss"] else 0
         win_loss_ratio = (avg_win / avg_loss) if avg_loss > 0 else avg_win
 
+        # Get trade counts for the period
+        trade_counts = await db.get_trade_counts_for_period(start_date, end_date)
+
         chart_stats = ChartStats(
             total_net_pnl=total_pnl_usdt,
             max_drawdown_percent=drawdown_data["max_drawdown_percent"],
             max_drawdown_usdt=drawdown_data["max_drawdown"],
-            trades_opened_today=0,  # N/A for multi-day periods
-            trades_closed_today=stats["total_trades"],
-            trades_still_open=0,
+            trades_opened_today=trade_counts["opened_in_period"],
+            trades_closed_today=trade_counts["closed_in_period"],
+            trades_still_open=trade_counts["still_open"],
             win_rate=stats["win_rate"],
             total_used_equity=total_capital,
             profit_factor=stats["profit_factor"],

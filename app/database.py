@@ -575,6 +575,61 @@ class Database:
             "still_open": still_open,
         }
 
+    async def get_trade_counts_for_period(
+        self, start_date: str | None, end_date: str | None
+    ) -> dict:
+        """
+        Get trade count breakdown for a date range.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD) or None for all-time
+            end_date: End date (YYYY-MM-DD) or None for all-time
+
+        Returns:
+            Dict with:
+            - opened_in_period: Trades opened during the period
+            - closed_in_period: Trades closed during the period
+            - still_open: Trades that are currently still open
+        """
+        # Trades opened in period
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                "SELECT COUNT(*) as count FROM trades WHERE DATE(created_at) BETWEEN ? AND ?",
+                (start_date, end_date),
+            )
+        else:
+            cursor = await self.connection.execute(
+                "SELECT COUNT(*) as count FROM trades"
+            )
+        row = await cursor.fetchone()
+        opened_in_period = row["count"] if row else 0
+
+        # Trades closed in period
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                "SELECT COUNT(*) as count FROM trades WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?",
+                (start_date, end_date),
+            )
+        else:
+            cursor = await self.connection.execute(
+                "SELECT COUNT(*) as count FROM trades WHERE status = 'closed'"
+            )
+        row = await cursor.fetchone()
+        closed_in_period = row["count"] if row else 0
+
+        # Trades still open (all currently open trades)
+        cursor = await self.connection.execute(
+            "SELECT COUNT(*) as count FROM trades WHERE status = 'open'"
+        )
+        row = await cursor.fetchone()
+        still_open = row["count"] if row else 0
+
+        return {
+            "opened_in_period": opened_in_period,
+            "closed_in_period": closed_in_period,
+            "still_open": still_open,
+        }
+
     # =========== Period-Based Query Methods ===========
 
     async def get_realized_pnl_for_period(
