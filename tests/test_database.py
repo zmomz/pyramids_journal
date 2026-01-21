@@ -250,12 +250,20 @@ class TestGetDrawdownForPeriod:
 
     @pytest.mark.asyncio
     async def test_no_trades_drawdown(self, populated_db):
-        """Test drawdown for period with no trades."""
+        """Test drawdown for period with no trades.
+
+        With account snapshot approach, equity reflects cumulative PnL
+        from all trades before the period, even when no trades in period.
+        """
         far_future = "2030-01-01"
         dd_data = await populated_db.get_drawdown_for_period(far_future, far_future)
 
         assert dd_data["trade_count"] == 0
-        assert dd_data["current_equity"] == 0.0
+        # Account snapshot: cumulative PnL before period = 394.75 (all historical trades)
+        # Total capital for period = 0 (no trades)
+        # Starting equity = 394.75 + 0 = 394.75
+        assert abs(dd_data["current_equity"] - 394.75) < 0.01
+        assert abs(dd_data["peak"] - 394.75) < 0.01
         assert dd_data["max_drawdown"] == 0.0
 
     @pytest.mark.asyncio
