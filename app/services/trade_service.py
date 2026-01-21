@@ -5,6 +5,7 @@ Core business logic for handling pyramid entries and exits.
 """
 
 import logging
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
@@ -201,16 +202,38 @@ class TradeService:
 
         # NOW create trade if it's new (validation passed)
         if is_new_trade:
-            await db.create_trade_with_group(
-                trade_id=trade_id,
-                group_id=group_id,
-                exchange=exchange,
-                base=parsed.base,
-                quote=parsed.quote,
-                timeframe=alert.timeframe,
-                position_side=alert.position_side,
-            )
-            logger.info(f"Created new trade {trade_id} with group {group_id}")
+            try:
+                await db.create_trade_with_group(
+                    trade_id=trade_id,
+                    group_id=group_id,
+                    exchange=exchange,
+                    base=parsed.base,
+                    quote=parsed.quote,
+                    timeframe=alert.timeframe,
+                    position_side=alert.position_side,
+                )
+                logger.info(f"Created new trade {trade_id} with group {group_id}")
+            except sqlite3.IntegrityError:
+                # Race condition: another request created the trade first
+                # Re-fetch the existing trade and add pyramid to it
+                logger.warning(
+                    f"Race condition detected for {parsed.base}/{parsed.quote} "
+                    f"({alert.timeframe}), adding to existing trade"
+                )
+                trade = await db.get_open_trade_by_group(
+                    exchange, parsed.base, parsed.quote, alert.timeframe
+                )
+                if not trade:
+                    # Extremely rare: trade was created and closed between our attempts
+                    return TradeResult(
+                        success=False,
+                        message="Race condition: trade created and closed by another request",
+                        error="RACE_CONDITION",
+                    ), None
+                trade_id = trade["id"]
+                group_id = trade["group_id"]
+                existing_pyramids = await db.get_pyramids_for_trade(trade_id)
+                pyramid_index = len(existing_pyramids)
 
         # Calculate fees
         fee_rate = exchange_config.get_fee_rate(exchange)

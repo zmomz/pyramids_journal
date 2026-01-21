@@ -107,6 +107,11 @@ CREATE INDEX IF NOT EXISTS idx_trades_group_id ON trades(group_id);
 CREATE INDEX IF NOT EXISTS idx_trades_timeframe ON trades(timeframe);
 CREATE INDEX IF NOT EXISTS idx_pyramids_trade_id ON pyramids(trade_id);
 CREATE INDEX IF NOT EXISTS idx_symbol_rules_exchange ON symbol_rules(exchange);
+
+-- Unique partial index to prevent duplicate open trades for same symbol/timeframe
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_open_unique
+ON trades (exchange, base, quote, timeframe)
+WHERE status = 'open';
 """
 
 # Migration queries for existing databases
@@ -187,6 +192,15 @@ class Database:
             await self._connection.execute(
                 "ALTER TABLE exits ADD COLUMN received_timestamp TEXT"
             )
+
+        # Add unique index for open trades (prevents race condition duplicates)
+        await self._connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_open_unique
+            ON trades (exchange, base, quote, timeframe)
+            WHERE status = 'open'
+            """
+        )
 
         await self._connection.commit()
 
