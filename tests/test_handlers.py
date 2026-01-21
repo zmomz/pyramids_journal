@@ -1547,6 +1547,10 @@ class TestGeneratePeriodReportWithData:
             "max_drawdown_percent": 0,
             "current_drawdown": 0,
         })
+        mock_db.get_trade_counts_for_period = AsyncMock(return_value={
+            "opened_in_period": len(trades),
+            "closed_in_period": len(trades),
+        })
 
     @pytest.mark.asyncio
     async def test_generate_period_report_with_trades(self):

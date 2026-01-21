@@ -478,7 +478,6 @@ class TestModelsValidation:
             max_drawdown_usdt=100.0,
             trades_opened_today=5,
             trades_closed_today=3,
-            trades_still_open=2,
             win_rate=65.0,
             total_used_equity=10000.0,
             profit_factor=2.5,

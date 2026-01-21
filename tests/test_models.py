@@ -413,7 +413,6 @@ class TestChartStats:
         assert stats.max_drawdown_percent == 0.0
         assert stats.trades_opened_today == 0
         assert stats.trades_closed_today == 0
-        assert stats.trades_still_open == 0
         assert stats.win_rate == 0.0
 
     def test_custom_values(self):
@@ -424,7 +423,6 @@ class TestChartStats:
             max_drawdown_usdt=50.0,
             trades_opened_today=5,
             trades_closed_today=4,
-            trades_still_open=1,
             win_rate=75.0,
             total_used_equity=10000.0,
             profit_factor=2.5,

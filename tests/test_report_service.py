@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+import pytz
 
 
 class TestReportServiceScheduler:
@@ -303,7 +304,9 @@ class TestGenerateDailyReport:
 
                 report = await service.generate_daily_report(None)
 
-                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                # Use timezone-aware calculation to match the service logic
+                tz = pytz.timezone("UTC")
+                yesterday = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
                 assert report.date == yesterday
 
 

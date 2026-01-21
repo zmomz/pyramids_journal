@@ -606,6 +606,7 @@ class TelegramService:
 
         try:
             chunks = self._split_message(text)
+            all_succeeded = True
             for i, chunk in enumerate(chunks):
                 try:
                     await self.bot.send_message(
@@ -618,8 +619,10 @@ class TelegramService:
                         await asyncio.sleep(0.5)
                 except TelegramError as e:
                     logger.error(f"Failed to send chunk {i+1}/{len(chunks)}: {e}")
-            logger.info("Telegram message sent successfully")
-            return True
+                    all_succeeded = False
+            if all_succeeded:
+                logger.info("Telegram message sent successfully")
+            return all_succeeded
         except TelegramError as e:
             logger.error(f"Failed to send Telegram message: {e}")
             return False
@@ -647,6 +650,7 @@ class TelegramService:
 
         try:
             chunks = self._split_message(text)
+            all_succeeded = True
             for i, chunk in enumerate(chunks):
                 try:
                     await self.bot.send_message(
@@ -659,8 +663,10 @@ class TelegramService:
                         await asyncio.sleep(0.5)
                 except TelegramError as e:
                     logger.error(f"Failed to send signals chunk {i+1}/{len(chunks)}: {e}")
-            logger.info("Telegram message sent to signals channel")
-            return True
+                    all_succeeded = False
+            if all_succeeded:
+                logger.info("Telegram message sent to signals channel")
+            return all_succeeded
         except TelegramError as e:
             logger.error(f"Failed to send to signals channel: {e}")
             return False

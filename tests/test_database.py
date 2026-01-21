@@ -354,7 +354,6 @@ class TestGetTradeCountsForDate:
 
         assert "opened_today" in counts
         assert "closed_today" in counts
-        assert "still_open" in counts
 
         # 4 trades created today (3 closed + 1 open)
         assert counts["opened_today"] == 4

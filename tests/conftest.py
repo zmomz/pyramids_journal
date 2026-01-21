@@ -278,7 +278,6 @@ def sample_chart_stats():
         max_drawdown_usdt=20.0,
         trades_opened_today=3,
         trades_closed_today=3,
-        trades_still_open=1,
         win_rate=66.67,
         total_used_equity=3500.0,
         profit_factor=2.5,
