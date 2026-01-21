@@ -460,6 +460,35 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def get_equity_curve_data_for_period(
+        self, start_date: str | None, end_date: str | None
+    ) -> list[dict]:
+        """
+        Get equity curve data points for a date range or all-time.
+        Returns trades ordered by close time with their PnL.
+        """
+        if start_date and end_date:
+            cursor = await self.connection.execute(
+                """
+                SELECT closed_at, total_pnl_usdt
+                FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                ORDER BY closed_at ASC
+                """,
+                (start_date, end_date),
+            )
+        else:
+            cursor = await self.connection.execute(
+                """
+                SELECT closed_at, total_pnl_usdt
+                FROM trades
+                WHERE status = 'closed'
+                ORDER BY closed_at ASC
+                """
+            )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
     async def get_cumulative_pnl_before_date(self, date: str) -> float:
         """
         Get the cumulative realized PnL from all closed trades BEFORE the given date.

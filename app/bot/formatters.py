@@ -225,7 +225,7 @@ def format_help() -> str:
 /live - Real-time prices
 /ping - Health check
 
-📈 Reporting (all support: today|week|month|YYYY-MM-DD)
+📈 Reporting (all support: today|yesterday|week|month|YYYY-MM-DD)
 /report [period] - Performance report with chart
 /stats [period] - Overall statistics
 /pnl [period] - PnL summary

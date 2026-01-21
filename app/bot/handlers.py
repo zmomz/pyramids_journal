@@ -199,23 +199,23 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     """Generate performance report with equity curve chart.
 
     Usage:
-        /report - Yesterday's daily report
+        /report - All-time report
         /report today - Today's report (trades so far)
+        /report yesterday - Yesterday's daily report
         /report YYYY-MM-DD - Report for specific date
-        /report weekly - Last 7 days
-        /report monthly - Last 30 days
-        /report all - All-time report
+        /report week - Last 7 days
+        /report month - Last 30 days
     """
     from ..services.report_service import report_service
     from ..services.telegram_service import telegram_service
 
-    period = context.args[0] if context.args else "daily"
+    period = context.args[0] if context.args else "all"
 
     try:
         date = None
         report = None
 
-        if period == "daily":
+        if period == "yesterday":
             # Yesterday's report
             report = await report_service.generate_daily_report()
             date = report.date
@@ -230,10 +230,10 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             # Specific date (YYYY-MM-DD format)
             date = period
             report = await report_service.generate_daily_report(date)
-        elif period == "weekly":
+        elif period == "week":
             # Last 7 days
             report = await generate_period_report(7)
-        elif period == "monthly":
+        elif period == "month":
             # Last 30 days
             report = await generate_period_report(30)
         elif period == "all":
@@ -242,12 +242,12 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         else:
             await update.message.reply_text(
                 "Usage:\n"
-                "/report - Yesterday\n"
+                "/report - All-time report\n"
                 "/report today - Today's trades\n"
+                "/report yesterday - Yesterday's report\n"
                 "/report 2026-01-20 - Specific date\n"
-                "/report weekly - Last 7 days\n"
-                "/report monthly - Last 30 days\n"
-                "/report all - All-time report"
+                "/report week - Last 7 days\n"
+                "/report month - Last 30 days"
             )
             return
 
@@ -287,69 +287,148 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def generate_period_report(days: int | None):
-    """Generate report for a period of days, or all-time if days is None."""
-    from ..models import DailyReportData
+    """Generate report for a period of days, or all-time if days is None.
+
+    Returns the same level of detail as generate_daily_report() including:
+    - trades[] list with TradeHistoryItem objects
+    - equity_points[] for equity curve chart
+    - chart_stats for chart footer statistics
+    """
+    from ..models import DailyReportData, TradeHistoryItem, EquityPoint, ChartStats
     from collections import defaultdict
 
+    # Convert days to date range
+    tz = pytz.timezone(settings.timezone)
+    end_date = datetime.now(tz).strftime("%Y-%m-%d")
+
     if days is not None:
-        # Specific period
-        end_date = datetime.now(UTC)
-        start_date = end_date - timedelta(days=days)
-        cursor = await db.connection.execute(
-            """
-            SELECT * FROM trades
-            WHERE status = 'closed' AND closed_at >= ?
-            """,
-            (start_date.isoformat(),)
-        )
-        period_label = f"Last {days} days"
+        start_dt = datetime.now(tz) - timedelta(days=days - 1)
+        start_date = start_dt.strftime("%Y-%m-%d")
+        period_label = f"Last {days} Days"
     else:
-        # All-time
-        cursor = await db.connection.execute(
-            """
-            SELECT * FROM trades
-            WHERE status = 'closed'
-            """
-        )
+        start_date = None
+        end_date = None
         period_label = "All-Time"
 
-    rows = await cursor.fetchall()
-    trades = [dict(row) for row in rows]  # Convert sqlite3.Row to dict
+    # Use shared database functions (same as other commands)
+    stats = await db.get_statistics_for_period(start_date, end_date)
 
-    total_pnl = sum(t.get('total_pnl_usdt') or 0 for t in trades)
+    if stats["total_trades"] == 0:
+        return DailyReportData(
+            date=period_label,
+            total_trades=0,
+            total_pyramids=0,
+            total_pnl_usdt=0.0,
+            total_pnl_percent=0.0,
+            trades=[],
+            by_exchange={},
+            by_timeframe={},
+            by_pair={},
+        )
+
+    # Get trades and build trade history
+    trades = await db.get_trades_for_period(start_date, end_date, limit=1000)
+
     total_capital = 0.0
     total_pyramids = 0
-    by_exchange = defaultdict(lambda: {"pnl": 0, "trades": 0})
-    by_timeframe = defaultdict(lambda: {"pnl": 0, "trades": 0})
-    by_pair = defaultdict(float)
+    trade_history: list[TradeHistoryItem] = []
+    by_timeframe: dict = defaultdict(lambda: {"pnl": 0.0, "trades": 0})
+    by_pair: dict = defaultdict(float)
 
     for trade in trades:
         pyramids = await db.get_pyramids_for_trade(trade['id'])
-        total_pyramids += len(pyramids)
+        pyramids_count = len(pyramids)
+        total_pyramids += pyramids_count
+
         for p in pyramids:
-            p_dict = dict(p) if hasattr(p, 'keys') else p
-            total_capital += p_dict.get('capital_usdt', 0) or 0
+            total_capital += p.get('capital_usdt', 0) or 0
 
-        pnl = trade.get('total_pnl_usdt') or 0
-        by_exchange[trade['exchange']]['pnl'] += pnl
-        by_exchange[trade['exchange']]['trades'] += 1
+        pnl = trade.get('total_pnl_usdt', 0) or 0
+        pnl_percent = trade.get('total_pnl_percent', 0) or 0
+        pair = f"{trade['base']}/{trade['quote']}"
+        timeframe = trade.get('timeframe') or 'N/A'
 
-        timeframe = trade.get('timeframe') or 'unknown'
+        trade_history.append(TradeHistoryItem(
+            group_id=trade.get('group_id') or trade['id'][:8],
+            exchange=trade['exchange'],
+            pair=pair,
+            timeframe=timeframe,
+            pyramids_count=pyramids_count,
+            pnl_usdt=pnl,
+            pnl_percent=pnl_percent,
+        ))
+
         by_timeframe[timeframe]['pnl'] += pnl
         by_timeframe[timeframe]['trades'] += 1
-
-        pair = f"{trade['base']}/{trade['quote']}"
         by_pair[pair] += pnl
+
+    # Sort by PnL (best first)
+    trade_history.sort(key=lambda x: x.pnl_usdt, reverse=True)
+
+    # Get exchange breakdown
+    exchange_stats = await db.get_exchange_stats_for_period(start_date, end_date)
+    by_exchange = {
+        row["exchange"]: {"pnl": row["pnl"], "trades": row["trades"]}
+        for row in exchange_stats
+    }
+
+    # Calculate total PnL and percent
+    total_pnl_usdt = stats["total_pnl"]
+    total_pnl_percent = (total_pnl_usdt / total_capital * 100) if total_capital > 0 else 0
+
+    # Build equity curve
+    equity_points: list[EquityPoint] = []
+    if settings.equity_curve_enabled:
+        equity_data = await db.get_equity_curve_data_for_period(start_date, end_date)
+        running_pnl = 0.0
+        for row in equity_data:
+            running_pnl += row.get("total_pnl_usdt", 0) or 0
+            closed_at = row.get("closed_at")
+            if closed_at:
+                try:
+                    timestamp = datetime.fromisoformat(closed_at) if isinstance(closed_at, str) else closed_at
+                    equity_points.append(EquityPoint(
+                        timestamp=timestamp,
+                        cumulative_pnl=running_pnl
+                    ))
+                except (ValueError, TypeError):
+                    pass
+
+    # Build chart stats
+    chart_stats = None
+    if settings.equity_curve_enabled and trade_history:
+        drawdown_data = await db.get_drawdown_for_period(start_date, end_date)
+
+        avg_win = stats["avg_win"]
+        avg_loss = abs(stats["avg_loss"]) if stats["avg_loss"] else 0
+        win_loss_ratio = (avg_win / avg_loss) if avg_loss > 0 else avg_win
+
+        chart_stats = ChartStats(
+            total_net_pnl=total_pnl_usdt,
+            max_drawdown_percent=drawdown_data["max_drawdown_percent"],
+            max_drawdown_usdt=drawdown_data["max_drawdown"],
+            trades_opened_today=0,  # N/A for multi-day periods
+            trades_closed_today=stats["total_trades"],
+            trades_still_open=0,
+            win_rate=stats["win_rate"],
+            total_used_equity=total_capital,
+            profit_factor=stats["profit_factor"],
+            win_loss_ratio=win_loss_ratio,
+            cumulative_pnl=total_pnl_usdt,
+        )
 
     return DailyReportData(
         date=period_label,
-        total_trades=len(trades),
+        total_trades=stats["total_trades"],
         total_pyramids=total_pyramids,
-        total_pnl_usdt=total_pnl,
-        total_pnl_percent=(total_pnl / total_capital * 100) if total_capital > 0 else 0,
-        by_exchange=dict(by_exchange),
+        total_pnl_usdt=total_pnl_usdt,
+        total_pnl_percent=total_pnl_percent,
+        trades=trade_history,
+        by_exchange=by_exchange,
         by_timeframe=dict(by_timeframe),
         by_pair=dict(by_pair),
+        equity_points=equity_points,
+        chart_stats=chart_stats,
     )
 
 
@@ -470,6 +549,7 @@ async def cmd_best(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     Usage:
         /best - All-time best pairs
         /best today - Today's best pairs
+        /best yesterday - Yesterday's best pairs
         /best week - Last 7 days
         /best month - Last 30 days
         /best 2026-01-20 - Specific date
@@ -494,6 +574,7 @@ async def cmd_worst(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     Usage:
         /worst - All-time worst pairs
         /worst today - Today's worst pairs
+        /worst yesterday - Yesterday's worst pairs
         /worst week - Last 7 days
         /worst month - Last 30 days
         /worst 2026-01-20 - Specific date
@@ -518,6 +599,7 @@ async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     Usage:
         /streak - All-time streaks
         /streak today - Today's streaks
+        /streak yesterday - Yesterday's streaks
         /streak week - Last 7 days
         /streak month - Last 30 days
         /streak 2026-01-20 - Specific date
@@ -549,6 +631,7 @@ async def cmd_drawdown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     Usage:
         /drawdown - All-time drawdown
         /drawdown today - Today's drawdown
+        /drawdown yesterday - Yesterday's drawdown
         /drawdown week - Last 7 days
         /drawdown month - Last 30 days
         /drawdown 2026-01-20 - Specific date
@@ -587,6 +670,7 @@ async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         /trades - Last 10 trades
         /trades 20 - Last 20 trades
         /trades today - Today's trades
+        /trades yesterday - Yesterday's trades
         /trades week - Last 7 days
         /trades month - Last 30 days
         /trades 2026-01-20 - Specific date

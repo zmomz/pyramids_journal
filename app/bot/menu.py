@@ -279,8 +279,8 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             # Map menu periods to report command args
             period_map = {
                 "today": ["today"],
-                "week": ["weekly"],
-                "month": ["monthly"],
+                "week": ["week"],
+                "month": ["month"],
                 "all": ["all"],
             }
             context.args = period_map.get(period, ["all"])

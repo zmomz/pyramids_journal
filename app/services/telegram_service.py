@@ -6,6 +6,7 @@ Handles sending trade notifications and daily reports to Telegram.
 
 import io
 import logging
+import re
 from datetime import datetime, UTC
 
 import pytz
@@ -245,8 +246,12 @@ class TelegramService:
         Returns:
             Formatted message string
         """
+        # Use "Daily Report" for single dates, "Performance Report" for periods
+        is_single_date = bool(re.match(r"^\d{4}-\d{2}-\d{2}$", data.date))
+        report_title = "Daily Report" if is_single_date else "Performance Report"
+
         lines = [
-            f"📈 Daily Report - {data.date}",
+            f"📈 {report_title} - {data.date}",
             "",
             "Summary:",
             f"├─ Total Trades: {data.total_trades}",
