@@ -188,9 +188,10 @@ class ReportService:
             all_time_cumulative_pnl = await db.get_cumulative_pnl_before_date(date)
 
             equity_data = await db.get_equity_curve_data(date)
-            today_running_pnl = 0.0  # Start from $0 for today
+            # Start from cumulative PnL before this date (account snapshot approach)
+            running_pnl = all_time_cumulative_pnl
             for row in equity_data:
-                today_running_pnl += row.get("total_pnl_usdt", 0) or 0
+                running_pnl += row.get("total_pnl_usdt", 0) or 0
                 closed_at = row.get("closed_at")
                 if closed_at:
                     try:
@@ -200,7 +201,7 @@ class ReportService:
                             timestamp = closed_at
                         equity_points.append(EquityPoint(
                             timestamp=timestamp,
-                            cumulative_pnl=today_running_pnl  # Today's running total only
+                            cumulative_pnl=running_pnl  # Account snapshot value
                         ))
                     except (ValueError, TypeError):
                         pass

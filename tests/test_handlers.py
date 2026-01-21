@@ -1523,6 +1523,7 @@ class TestGeneratePeriodReportWithData:
         mock_db.get_exchange_stats_for_period = AsyncMock(return_value=list(exchange_stats.values()))
 
         mock_db.get_equity_curve_data_for_period = AsyncMock(return_value=[])
+        mock_db.get_cumulative_pnl_before_date = AsyncMock(return_value=0.0)
         mock_db.get_drawdown_for_period = AsyncMock(return_value={
             "max_drawdown": 0,
             "max_drawdown_percent": 0,

@@ -739,10 +739,14 @@ class Database:
         """
         Calculate drawdown metrics for a date range.
 
+        Uses account snapshot approach: starts equity from cumulative PnL before
+        period + period capital, giving realistic drawdown percentages.
+
         Returns:
             Dict with current_equity, peak, current_drawdown, max_drawdown,
             max_drawdown_percent, trade_count
         """
+        # Get trades for PnL calculation
         if start_date and end_date:
             cursor = await self.connection.execute(
                 """
@@ -762,18 +766,59 @@ class Database:
             )
 
         rows = await cursor.fetchall()
+
+        # Get total capital deployed for the period
+        if start_date and end_date:
+            capital_cursor = await self.connection.execute(
+                """
+                SELECT COALESCE(SUM(p.capital_usdt), 0) as total_capital
+                FROM pyramids p
+                JOIN trades t ON p.trade_id = t.id
+                WHERE t.status = 'closed' AND DATE(t.closed_at) BETWEEN ? AND ?
+                """,
+                (start_date, end_date),
+            )
+        else:
+            capital_cursor = await self.connection.execute(
+                """
+                SELECT COALESCE(SUM(p.capital_usdt), 0) as total_capital
+                FROM pyramids p
+                JOIN trades t ON p.trade_id = t.id
+                WHERE t.status = 'closed'
+                """
+            )
+        capital_row = await capital_cursor.fetchone()
+        total_capital = capital_row["total_capital"] if capital_row else 0
+
+        # Get cumulative PnL before the period for snapshot approach
+        cumulative_pnl_before = 0.0
+        if start_date:
+            before_cursor = await self.connection.execute(
+                """
+                SELECT COALESCE(SUM(total_pnl_usdt), 0) as cumulative_pnl
+                FROM trades
+                WHERE status = 'closed' AND DATE(closed_at) < ?
+                """,
+                (start_date,),
+            )
+            before_row = await before_cursor.fetchone()
+            cumulative_pnl_before = before_row["cumulative_pnl"] if before_row else 0.0
+
         if not rows:
+            starting_equity = cumulative_pnl_before + total_capital
             return {
-                "current_equity": 0.0,
-                "peak": 0.0,
+                "current_equity": starting_equity,
+                "peak": starting_equity,
                 "current_drawdown": 0.0,
                 "max_drawdown": 0.0,
                 "max_drawdown_percent": 0.0,
                 "trade_count": 0,
             }
 
-        equity = 0.0
-        peak = 0.0
+        # Start from account snapshot: previous cumulative PnL + period capital
+        starting_equity = cumulative_pnl_before + total_capital
+        equity = starting_equity
+        peak = starting_equity
         max_dd = 0.0
 
         for row in rows:
@@ -785,7 +830,12 @@ class Database:
                 max_dd = dd
 
         current_dd = peak - equity
-        max_dd_percent = (max_dd / peak * 100) if peak > 0 else 0
+
+        # Calculate percentage relative to peak (realistic account view)
+        if peak > 0:
+            max_dd_percent = (max_dd / peak * 100)
+        else:
+            max_dd_percent = 0.0
 
         return {
             "current_equity": equity,
