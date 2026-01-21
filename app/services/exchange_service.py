@@ -6,7 +6,7 @@ Handles price fetching, symbol info caching, and validation.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from ..database import db
 from ..exchanges import EXCHANGES
@@ -105,7 +105,7 @@ class ExchangeService:
             if cached:
                 # Check if cache is still valid
                 updated_at = datetime.fromisoformat(cached["updated_at"])
-                if datetime.utcnow() - updated_at < timedelta(hours=CACHE_EXPIRY_HOURS):
+                if datetime.now(timezone.utc) - updated_at < timedelta(hours=CACHE_EXPIRY_HOURS):
                     logger.debug(f"Using cached symbol info for {base}/{quote} on {exchange}")
                     return SymbolInfo(
                         base=cached["base"],
