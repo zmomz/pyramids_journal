@@ -364,9 +364,9 @@ class TradeService:
             (total_net_pnl / total_capital) * 100 if total_capital > 0 else 0
         )
 
-        # Add exit record with timestamps
+        # Add exit record with timestamps (returns False if race condition detected)
         exit_id = str(uuid.uuid4())
-        await db.add_exit(
+        exit_added = await db.add_exit(
             exit_id,
             trade_id,
             exit_price,
@@ -374,6 +374,17 @@ class TradeService:
             exchange_timestamp=alert.timestamp,
             received_timestamp=received_timestamp.isoformat(),
         )
+
+        if not exit_added:
+            # Race condition: another request already closed this trade
+            logger.warning(
+                f"Race condition detected: trade {group_id} already has exit record, "
+                f"skipping duplicate exit signal"
+            )
+            return TradeResult(
+                success=True,
+                message="Trade already closed by another request (duplicate signal)",
+            ), None
 
         # Close trade
         await db.close_trade(trade_id, total_net_pnl, total_pnl_percent)

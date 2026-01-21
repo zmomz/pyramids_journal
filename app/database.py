@@ -354,6 +354,13 @@ class Database:
         await self.connection.commit()
 
     # Exit methods
+    async def has_exit(self, trade_id: str) -> bool:
+        """Check if an exit record already exists for a trade."""
+        cursor = await self.connection.execute(
+            "SELECT 1 FROM exits WHERE trade_id = ?", (trade_id,)
+        )
+        return await cursor.fetchone() is not None
+
     async def add_exit(
         self,
         exit_id: str,
@@ -362,8 +369,16 @@ class Database:
         fee_usdt: float,
         exchange_timestamp: str | None = None,
         received_timestamp: str | None = None,
-    ) -> None:
-        """Add an exit record for a trade."""
+    ) -> bool:
+        """
+        Add an exit record for a trade.
+
+        Returns True if exit was added, False if it already existed (race condition).
+        """
+        # Check if exit already exists (race condition protection)
+        if await self.has_exit(trade_id):
+            return False
+
         await self.connection.execute(
             """
             INSERT INTO exits (id, trade_id, exit_price, exit_time, fee_usdt,
@@ -381,6 +396,7 @@ class Database:
             ),
         )
         await self.connection.commit()
+        return True
 
     # Symbol rules methods
     async def get_symbol_rules(
