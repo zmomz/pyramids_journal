@@ -4,6 +4,7 @@ Telegram Bot Command Handlers
 All bot command handlers for monitoring, reporting, configuration, and control.
 """
 
+import asyncio
 import csv
 import io
 import logging
@@ -138,20 +139,37 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if len(message) <= 4096:
             await update.message.reply_text(message)
         else:
-            # Split message into chunks
+            # Split message into chunks, keeping multi-line entries together
             chunks = []
             current_chunk = ""
-            for line in message.split('\n'):
-                if len(current_chunk) + len(line) + 1 > 4096:
+            lines = message.split('\n')
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                # Group detail lines (start with │ or spaces) with their parent
+                block = line
+                if i + 1 < len(lines) and (lines[i + 1].startswith('│') or lines[i + 1].startswith('   ')):
+                    block = line + '\n' + lines[i + 1]
+                    i += 1
+
+                if len(current_chunk) + len(block) + 1 > 4096:
                     chunks.append(current_chunk)
-                    current_chunk = line
+                    current_chunk = block
                 else:
-                    current_chunk = current_chunk + '\n' + line if current_chunk else line
+                    current_chunk = current_chunk + '\n' + block if current_chunk else block
+                i += 1
+
             if current_chunk:
                 chunks.append(current_chunk)
 
-            for chunk in chunks:
-                await update.message.reply_text(chunk)
+            for i, chunk in enumerate(chunks):
+                try:
+                    await update.message.reply_text(chunk)
+                    # Add delay between chunks to avoid Telegram rate limiting
+                    if i < len(chunks) - 1:
+                        await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"Failed to send chunk {i+1}/{len(chunks)}: {e}")
 
     except Exception as e:
         logger.error(f"Error in /status: {e}")
@@ -269,20 +287,38 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if len(message) <= 4096:
             await update.message.reply_text(message)
         else:
-            # Split message into chunks
+            # Split message into chunks, keeping 2-line trade entries together
             chunks = []
             current_chunk = ""
-            for line in message.split('\n'):
-                if len(current_chunk) + len(line) + 1 > 4096:
+            lines = message.split('\n')
+            i = 0
+            while i < len(lines):
+                line = lines[i]
+                # Check if next line is a detail line (starts with │ or spaces for trade details)
+                # Group them together to avoid splitting trade entries
+                block = line
+                if i + 1 < len(lines) and (lines[i + 1].startswith('│') or lines[i + 1].startswith('   ')):
+                    block = line + '\n' + lines[i + 1]
+                    i += 1
+
+                if len(current_chunk) + len(block) + 1 > 4096:
                     chunks.append(current_chunk)
-                    current_chunk = line
+                    current_chunk = block
                 else:
-                    current_chunk = current_chunk + '\n' + line if current_chunk else line
+                    current_chunk = current_chunk + '\n' + block if current_chunk else block
+                i += 1
+
             if current_chunk:
                 chunks.append(current_chunk)
 
-            for chunk in chunks:
-                await update.message.reply_text(chunk)
+            for i, chunk in enumerate(chunks):
+                try:
+                    await update.message.reply_text(chunk)
+                    # Add delay between chunks to avoid Telegram rate limiting
+                    if i < len(chunks) - 1:
+                        await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.error(f"Failed to send chunk {i+1}/{len(chunks)}: {e}")
 
     except Exception as e:
         logger.error(f"Error in /report: {e}")
