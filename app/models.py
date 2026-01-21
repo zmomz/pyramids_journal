@@ -162,9 +162,8 @@ class ChartStats(BaseModel):
     max_drawdown_percent: float = 0.0
     max_drawdown_usdt: float = 0.0
     # Trade counts breakdown
-    trades_opened_today: int = 0  # Trades opened today
-    trades_closed_today: int = 0  # Trades closed today
-    trades_still_open: int = 0  # Trades opened before today, still open
+    trades_opened_today: int = 0  # Trades opened
+    trades_closed_today: int = 0  # Trades closed
     win_rate: float = 0.0
     total_used_equity: float = 0.0
     profit_factor: float = 0.0

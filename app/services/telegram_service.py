@@ -482,12 +482,12 @@ class TelegramService:
             border_color = '#404060'
 
             # Define stats data for two rows
-            # Trade counts: O=Opened today, C=Closed today, S=Still open from before
-            trade_counts_str = f"O:{chart_stats.trades_opened_today} C:{chart_stats.trades_closed_today} S:{chart_stats.trades_still_open}"
+            # Trade counts: O=Opened, C=Closed
+            trade_counts_str = f"O:{chart_stats.trades_opened_today} C:{chart_stats.trades_closed_today}"
             row1_stats = [
                 (f"{pnl_label} (USDT)", f'{"+$" if chart_stats.total_net_pnl >= 0 else "-$"}{abs(chart_stats.total_net_pnl):,.2f}'),
                 ('Max Drawdown (%)', f'{chart_stats.max_drawdown_percent:.2f}%'),
-                ('Trades (O/C/S)', trade_counts_str),
+                ('Trades (O/C)', trade_counts_str),
                 ('Win Rate (%)', f'{chart_stats.win_rate:.2f}%'),
             ]
             row2_stats = [

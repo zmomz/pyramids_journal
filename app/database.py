@@ -543,7 +543,6 @@ class Database:
             Dict with:
             - opened_today: Trades opened on this date
             - closed_today: Trades closed on this date
-            - still_open: Trades opened before this date that are still open
         """
         # Trades opened today
         cursor = await self.connection.execute(
@@ -561,18 +560,9 @@ class Database:
         row = await cursor.fetchone()
         closed_today = row["count"] if row else 0
 
-        # Trades still open (opened before today)
-        cursor = await self.connection.execute(
-            "SELECT COUNT(*) as count FROM trades WHERE status = 'open' AND DATE(created_at) < ?",
-            (date,),
-        )
-        row = await cursor.fetchone()
-        still_open = row["count"] if row else 0
-
         return {
             "opened_today": opened_today,
             "closed_today": closed_today,
-            "still_open": still_open,
         }
 
     async def get_trade_counts_for_period(
@@ -589,7 +579,6 @@ class Database:
             Dict with:
             - opened_in_period: Trades opened during the period
             - closed_in_period: Trades closed during the period
-            - still_open: Trades that are currently still open
         """
         # Trades opened in period
         if start_date and end_date:
@@ -617,17 +606,9 @@ class Database:
         row = await cursor.fetchone()
         closed_in_period = row["count"] if row else 0
 
-        # Trades still open (all currently open trades)
-        cursor = await self.connection.execute(
-            "SELECT COUNT(*) as count FROM trades WHERE status = 'open'"
-        )
-        row = await cursor.fetchone()
-        still_open = row["count"] if row else 0
-
         return {
             "opened_in_period": opened_in_period,
             "closed_in_period": closed_in_period,
-            "still_open": still_open,
         }
 
     # =========== Period-Based Query Methods ===========

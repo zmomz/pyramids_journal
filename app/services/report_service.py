@@ -269,7 +269,6 @@ class ReportService:
                 max_drawdown_usdt=max_drawdown_usdt,
                 trades_opened_today=trade_counts["opened_today"],
                 trades_closed_today=trade_counts["closed_today"],
-                trades_still_open=trade_counts["still_open"],
                 win_rate=win_rate,
                 total_used_equity=total_capital,
                 profit_factor=profit_factor,

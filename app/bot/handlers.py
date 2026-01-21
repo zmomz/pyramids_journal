@@ -418,7 +418,6 @@ async def generate_period_report(days: int | None):
             max_drawdown_usdt=drawdown_data["max_drawdown"],
             trades_opened_today=trade_counts["opened_in_period"],
             trades_closed_today=trade_counts["closed_in_period"],
-            trades_still_open=trade_counts["still_open"],
             win_rate=stats["win_rate"],
             total_used_equity=total_capital,
             profit_factor=stats["profit_factor"],
