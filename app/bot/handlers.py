@@ -419,10 +419,8 @@ async def generate_period_report(days: int | None):
     equity_points: list[EquityPoint] = []
     if settings.equity_curve_enabled:
         equity_data = await db.get_equity_curve_data_for_period(start_date, end_date)
-        # Start from cumulative PnL before period (account snapshot approach)
+        # Start from 0 - period reports show only this period's performance
         running_pnl = 0.0
-        if start_date:
-            running_pnl = await db.get_cumulative_pnl_before_date(start_date)
         for row in equity_data:
             running_pnl += row.get("total_pnl_usdt", 0) or 0
             closed_at = row.get("closed_at")

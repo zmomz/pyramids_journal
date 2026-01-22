@@ -1060,3 +1060,237 @@ class TestExchangeEdgeCases:
         assert ExchangeService.round_price(0.00001234, 0.00000001) == 0.00001234
         # Large tick size
         assert ExchangeService.round_price(50123.45, 100) == 50100.0
+
+    def test_round_price_zero_tick_size(self):
+        """
+        Verify round_price returns original price when tick_size <= 0.
+
+        Bug prevented: Division by zero or infinite loop with invalid tick_size.
+        """
+        from app.services.exchange_service import ExchangeService
+
+        price = 50000.123
+        # tick_size = 0 should return original price unchanged
+        assert ExchangeService.round_price(price, 0) == price
+        # tick_size < 0 should return original price unchanged
+        assert ExchangeService.round_price(price, -0.01) == price
+
+    @pytest.mark.asyncio
+    async def test_validate_order_symbol_not_found(self):
+        """
+        Verify validate_order handles SymbolNotFoundError gracefully.
+
+        Bug prevented: Unhandled exception crashes validation.
+        """
+        from app.services.exchange_service import ExchangeService
+        from app.exchanges.base import SymbolNotFoundError
+
+        with patch.object(ExchangeService, "get_symbol_info") as mock_info:
+            mock_info.side_effect = SymbolNotFoundError("NOTREAL/USDT")
+
+            is_valid, error = await ExchangeService.validate_order(
+                "binance", "NOTREAL", "USDT",
+                size=0.01,
+                price=100.0
+            )
+
+        assert is_valid is False
+        assert "NOTREAL/USDT" in error
+
+    @pytest.mark.asyncio
+    async def test_validate_order_exchange_api_error(self):
+        """
+        Verify validate_order handles ExchangeAPIError gracefully.
+
+        Bug prevented: API errors crash validation instead of returning failure.
+        """
+        from app.services.exchange_service import ExchangeService
+        from app.exchanges.base import ExchangeAPIError
+
+        with patch.object(ExchangeService, "get_symbol_info") as mock_info:
+            mock_info.side_effect = ExchangeAPIError("API rate limit exceeded")
+
+            is_valid, error = await ExchangeService.validate_order(
+                "binance", "BTC", "USDT",
+                size=0.01,
+                price=50000.0
+            )
+
+        assert is_valid is False
+        assert "rate limit" in error.lower()
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_uses_cache(self):
+        """
+        Verify get_symbol_info uses cached data when available and fresh.
+
+        Bug prevented: Unnecessary API calls for symbol info.
+        """
+        from app.services.exchange_service import ExchangeService
+        from app.exchanges.base import SymbolInfo
+        from datetime import datetime, timezone
+
+        cached_data = {
+            "base": "BTC",
+            "quote": "USDT",
+            "price_precision": 2,
+            "qty_precision": 4,
+            "min_qty": 0.0001,
+            "min_notional": 10.0,
+            "tick_size": 0.01,
+            "updated_at": datetime.now(timezone.utc).isoformat()  # Fresh cache
+        }
+
+        with patch("app.services.exchange_service.db") as mock_db, \
+             patch("app.services.exchange_service.normalize_exchange", return_value="binance"):
+            mock_db.get_symbol_rules = AsyncMock(return_value=cached_data)
+
+            info = await ExchangeService.get_symbol_info("binance", "BTC", "USDT")
+
+        # Should return cached data without hitting exchange
+        assert info.base == "BTC"
+        assert info.quote == "USDT"
+        assert info.min_qty == 0.0001
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_fetches_when_cache_expired(self):
+        """
+        Verify get_symbol_info fetches from exchange when cache is expired.
+
+        Bug prevented: Using stale trading rules causes validation errors.
+        """
+        from app.services.exchange_service import ExchangeService
+        from app.exchanges.base import SymbolInfo
+        from datetime import datetime, timezone, timedelta
+
+        # Cache that's 25 hours old (past 24h expiry)
+        old_cache = {
+            "base": "BTC",
+            "quote": "USDT",
+            "price_precision": 2,
+            "qty_precision": 4,
+            "min_qty": 0.0001,
+            "min_notional": 10.0,
+            "tick_size": 0.01,
+            "updated_at": (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        }
+
+        fresh_info = SymbolInfo(
+            base="BTC",
+            quote="USDT",
+            price_precision=2,
+            qty_precision=5,  # Updated precision
+            min_qty=0.00001,  # Updated min_qty
+            min_notional=5.0,
+            tick_size=0.01
+        )
+
+        with patch("app.services.exchange_service.db") as mock_db, \
+             patch("app.services.exchange_service.normalize_exchange", return_value="binance"), \
+             patch.object(ExchangeService, "get_exchange_adapter") as mock_get_adapter:
+
+            mock_db.get_symbol_rules = AsyncMock(return_value=old_cache)
+            mock_db.upsert_symbol_rules = AsyncMock()
+
+            # Mock the adapter
+            mock_adapter = MagicMock()
+            mock_adapter_instance = MagicMock()
+            mock_adapter_instance.get_symbol_info = AsyncMock(return_value=fresh_info)
+            mock_adapter.return_value.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
+            mock_adapter.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_get_adapter.return_value = mock_adapter
+
+            info = await ExchangeService.get_symbol_info("binance", "BTC", "USDT")
+
+        # Should have fresh data
+        assert info.qty_precision == 5
+        assert info.min_qty == 0.00001
+        # Should have updated cache
+        mock_db.upsert_symbol_rules.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_symbol_info_fetches_when_no_cache(self):
+        """
+        Verify get_symbol_info fetches from exchange when no cache exists.
+
+        Bug prevented: New symbols can't be traded without cache.
+        """
+        from app.services.exchange_service import ExchangeService
+        from app.exchanges.base import SymbolInfo
+
+        fresh_info = SymbolInfo(
+            base="NEW",
+            quote="USDT",
+            price_precision=2,
+            qty_precision=4,
+            min_qty=0.001,
+            min_notional=10.0,
+            tick_size=0.01
+        )
+
+        with patch("app.services.exchange_service.db") as mock_db, \
+             patch("app.services.exchange_service.normalize_exchange", return_value="binance"), \
+             patch.object(ExchangeService, "get_exchange_adapter") as mock_get_adapter:
+
+            mock_db.get_symbol_rules = AsyncMock(return_value=None)  # No cache
+            mock_db.upsert_symbol_rules = AsyncMock()
+
+            mock_adapter = MagicMock()
+            mock_adapter_instance = MagicMock()
+            mock_adapter_instance.get_symbol_info = AsyncMock(return_value=fresh_info)
+            mock_adapter.return_value.__aenter__ = AsyncMock(return_value=mock_adapter_instance)
+            mock_adapter.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_get_adapter.return_value = mock_adapter
+
+            info = await ExchangeService.get_symbol_info("binance", "NEW", "USDT")
+
+        assert info.base == "NEW"
+        mock_db.upsert_symbol_rules.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_price_and_info(self):
+        """
+        Verify get_price_and_info convenience method returns both data.
+
+        Bug prevented: Multiple separate API calls when both needed.
+        """
+        from app.services.exchange_service import ExchangeService
+        from app.exchanges.base import PriceData, SymbolInfo
+
+        mock_price = PriceData(price=50000.0, timestamp=1705762800000)
+        mock_info = SymbolInfo(
+            base="BTC",
+            quote="USDT",
+            price_precision=2,
+            qty_precision=4,
+            min_qty=0.0001,
+            min_notional=10.0,
+            tick_size=0.01
+        )
+
+        with patch.object(ExchangeService, "get_price", new_callable=AsyncMock) as mock_get_price, \
+             patch.object(ExchangeService, "get_symbol_info", new_callable=AsyncMock) as mock_get_info:
+
+            mock_get_price.return_value = mock_price
+            mock_get_info.return_value = mock_info
+
+            price_data, symbol_info = await ExchangeService.get_price_and_info(
+                "binance", "BTCUSDT"
+            )
+
+        assert price_data.price == 50000.0
+        assert symbol_info.min_qty == 0.0001
+
+    def test_get_exchange_adapter_no_adapter(self):
+        """
+        Verify error when exchange is known but adapter not registered.
+
+        Bug prevented: Silent failure when adapter missing from EXCHANGES dict.
+        """
+        from app.services.exchange_service import ExchangeService
+
+        with patch("app.services.exchange_service.normalize_exchange", return_value="valid_exchange"), \
+             patch("app.services.exchange_service.EXCHANGES", {"other_exchange": MagicMock()}):
+
+            with pytest.raises(ValueError, match="No adapter"):
+                ExchangeService.get_exchange_adapter("valid_exchange")

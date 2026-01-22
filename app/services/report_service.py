@@ -217,14 +217,10 @@ class ReportService:
 
         # Build equity curve data points (chart-specific)
         equity_points: list[EquityPoint] = []
-        all_time_cumulative_pnl = 0.0
         if settings.equity_curve_enabled:
-            # Get cumulative realized PnL from all trades BEFORE this date (for context)
-            all_time_cumulative_pnl = await db.get_cumulative_pnl_before_date(date)
-
             equity_data = await db.get_equity_curve_data(date)
-            # Start from cumulative PnL before this date (account snapshot approach)
-            running_pnl = all_time_cumulative_pnl
+            # Start from 0 - period reports show only this period's performance
+            running_pnl = 0.0
             for row in equity_data:
                 running_pnl += row.get("total_pnl_usdt", 0) or 0
                 closed_at = row.get("closed_at")
@@ -236,7 +232,7 @@ class ReportService:
                             timestamp = closed_at
                         equity_points.append(EquityPoint(
                             timestamp=timestamp,
-                            cumulative_pnl=running_pnl  # Account snapshot value
+                            cumulative_pnl=running_pnl  # Period-only cumulative
                         ))
                     except (ValueError, TypeError):
                         pass
@@ -257,14 +253,11 @@ class ReportService:
             max_drawdown_usdt = drawdown_data["max_drawdown"]
             max_drawdown_percent = drawdown_data["max_drawdown_percent"]
 
-            # All-time cumulative PnL (for context at bottom of chart)
-            final_all_time_pnl = all_time_cumulative_pnl + total_pnl_usdt
-
             # Get trade counts breakdown (report-specific)
             trade_counts = await db.get_trade_counts_for_date(date)
 
             chart_stats = ChartStats(
-                total_net_pnl=total_pnl_usdt,  # TODAY's PnL only
+                total_net_pnl=total_pnl_usdt,  # Period's PnL only
                 max_drawdown_percent=max_drawdown_percent,
                 max_drawdown_usdt=max_drawdown_usdt,
                 trades_opened_today=trade_counts["opened_today"],
@@ -273,7 +266,7 @@ class ReportService:
                 total_used_equity=total_capital,
                 profit_factor=profit_factor,
                 win_loss_ratio=win_loss_ratio,
-                cumulative_pnl=final_all_time_pnl,  # All-time for context
+                cumulative_pnl=total_pnl_usdt,  # Period's cumulative (starts from 0)
             )
 
         report_data = DailyReportData(

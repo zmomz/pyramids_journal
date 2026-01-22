@@ -56,6 +56,7 @@ async def test_db():
 async def populated_db(test_db):
     """Create a database with sample trade data."""
     # Insert sample trades for testing
+    # Use ISO format timestamps to match real app behavior (datetime.isoformat())
     today = datetime.now().strftime("%Y-%m-%d")
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -73,8 +74,8 @@ async def populated_db(test_db):
             "group_id": "group_1",
             "total_pnl_usdt": 100.50,
             "total_pnl_percent": 5.25,
-            "created_at": f"{today} 09:00:00",
-            "closed_at": f"{today} 10:00:00",
+            "created_at": f"{today}T09:00:00",
+            "closed_at": f"{today}T10:00:00",
         },
         {
             "id": "trade_2",
@@ -86,8 +87,8 @@ async def populated_db(test_db):
             "group_id": "group_2",
             "total_pnl_usdt": -30.25,
             "total_pnl_percent": -2.15,
-            "created_at": f"{today} 11:00:00",
-            "closed_at": f"{today} 12:00:00",
+            "created_at": f"{today}T11:00:00",
+            "closed_at": f"{today}T12:00:00",
         },
         {
             "id": "trade_3",
@@ -99,8 +100,8 @@ async def populated_db(test_db):
             "group_id": "group_3",
             "total_pnl_usdt": 50.00,
             "total_pnl_percent": 3.50,
-            "created_at": f"{today} 13:00:00",
-            "closed_at": f"{today} 14:00:00",
+            "created_at": f"{today}T13:00:00",
+            "closed_at": f"{today}T14:00:00",
         },
         # Yesterday's trades
         {
@@ -113,8 +114,8 @@ async def populated_db(test_db):
             "group_id": "group_4",
             "total_pnl_usdt": 200.00,
             "total_pnl_percent": 10.00,
-            "created_at": f"{yesterday} 09:00:00",
-            "closed_at": f"{yesterday} 10:00:00",
+            "created_at": f"{yesterday}T09:00:00",
+            "closed_at": f"{yesterday}T10:00:00",
         },
         {
             "id": "trade_5",
@@ -126,8 +127,8 @@ async def populated_db(test_db):
             "group_id": "group_5",
             "total_pnl_usdt": -75.50,
             "total_pnl_percent": -5.50,
-            "created_at": f"{yesterday} 14:00:00",
-            "closed_at": f"{yesterday} 15:00:00",
+            "created_at": f"{yesterday}T14:00:00",
+            "closed_at": f"{yesterday}T15:00:00",
         },
         # Week-old trade
         {
@@ -140,8 +141,8 @@ async def populated_db(test_db):
             "group_id": "group_6",
             "total_pnl_usdt": 150.00,
             "total_pnl_percent": 7.50,
-            "created_at": f"{week_ago} 09:00:00",
-            "closed_at": f"{week_ago} 18:00:00",
+            "created_at": f"{week_ago}T09:00:00",
+            "closed_at": f"{week_ago}T18:00:00",
         },
         # Open trade (still active)
         {
@@ -154,7 +155,7 @@ async def populated_db(test_db):
             "group_id": "group_7",
             "total_pnl_usdt": None,
             "total_pnl_percent": None,
-            "created_at": f"{today} 15:00:00",
+            "created_at": f"{today}T15:00:00",
             "closed_at": None,
         },
     ]
@@ -182,14 +183,14 @@ async def populated_db(test_db):
             ),
         )
 
-    # Insert sample pyramids
+    # Insert sample pyramids (using ISO format timestamps)
     pyramids = [
-        ("pyr_1", "trade_1", 1, 50000.0, 0.02, 1000.0, f"{today} 09:00:00", 0.001, 1.0),
-        ("pyr_2", "trade_1", 2, 49500.0, 0.02, 990.0, f"{today} 09:30:00", 0.001, 0.99),
-        ("pyr_3", "trade_2", 1, 3000.0, 0.5, 1500.0, f"{today} 11:00:00", 0.001, 1.5),
-        ("pyr_4", "trade_3", 1, 100.0, 10.0, 1000.0, f"{today} 13:00:00", 0.001, 1.0),
-        ("pyr_5", "trade_4", 1, 48000.0, 0.025, 1200.0, f"{yesterday} 09:00:00", 0.001, 1.2),
-        ("pyr_6", "trade_7", 1, 15.0, 100.0, 1500.0, f"{today} 15:00:00", 0.001, 1.5),
+        ("pyr_1", "trade_1", 1, 50000.0, 0.02, 1000.0, f"{today}T09:00:00", 0.001, 1.0),
+        ("pyr_2", "trade_1", 2, 49500.0, 0.02, 990.0, f"{today}T09:30:00", 0.001, 0.99),
+        ("pyr_3", "trade_2", 1, 3000.0, 0.5, 1500.0, f"{today}T11:00:00", 0.001, 1.5),
+        ("pyr_4", "trade_3", 1, 100.0, 10.0, 1000.0, f"{today}T13:00:00", 0.001, 1.0),
+        ("pyr_5", "trade_4", 1, 48000.0, 0.025, 1200.0, f"{yesterday}T09:00:00", 0.001, 1.2),
+        ("pyr_6", "trade_7", 1, 15.0, 100.0, 1500.0, f"{today}T15:00:00", 0.001, 1.5),
     ]
 
     for pyr in pyramids:

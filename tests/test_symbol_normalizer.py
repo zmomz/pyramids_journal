@@ -1,176 +1,290 @@
 """
-Tests for symbol normalizer in app/services/symbol_normalizer.py
+Tests for symbol parsing and exchange normalization.
 
-Tests symbol parsing and exchange normalization.
+These are pure functions with no external dependencies - perfect for
+table-driven tests that exhaustively cover all input formats.
+
+Bug categories prevented:
+- Wrong pair extraction from various symbol formats
+- Unknown exchange errors due to missed aliases
+- Incorrect symbol formatting for exchange APIs
 """
 
 import pytest
+from app.services.symbol_normalizer import (
+    parse_symbol,
+    normalize_exchange,
+    format_for_exchange,
+    is_valid_exchange,
+    get_supported_exchanges,
+    ParsedSymbol,
+    EXCHANGE_ALIASES,
+    QUOTE_CURRENCIES,
+)
 
 
 class TestParseSymbol:
-    """Tests for parse_symbol function."""
+    """
+    Tests for parse_symbol() function.
 
-    def test_parse_simple_symbol(self):
-        """Test parsing simple symbol without separator."""
-        from app.services.symbol_normalizer import parse_symbol
+    Bug prevented: Extracting wrong base/quote from symbol strings,
+    leading to incorrect trades or API calls.
+    """
 
-        parsed = parse_symbol("BTCUSDT")
-        assert parsed.base == "BTC"
-        assert parsed.quote == "USDT"
+    @pytest.mark.parametrize(
+        "symbol,expected_base,expected_quote",
+        [
+            # Slash separator (common in TradingView)
+            ("BTC/USDT", "BTC", "USDT"),
+            ("ETH/BTC", "ETH", "BTC"),
+            ("SOL/USDC", "SOL", "USDC"),
+            # Hyphen separator (OKX, Kucoin)
+            ("BTC-USDT", "BTC", "USDT"),
+            ("ETH-BTC", "ETH", "BTC"),
+            ("DOGE-USDT", "DOGE", "USDT"),
+            # Underscore separator (Gate.io)
+            ("BTC_USDT", "BTC", "USDT"),
+            ("ETH_USDC", "ETH", "USDC"),
+            # Concatenated (Binance, Bybit, MEXC)
+            ("BTCUSDT", "BTC", "USDT"),
+            ("ETHUSDT", "ETH", "USDT"),
+            ("SOLUSDT", "SOL", "USDT"),
+            ("DOGEUSDT", "DOGE", "USDT"),
+            ("XRPUSDT", "XRP", "USDT"),
+            # Less common quotes
+            ("ETHBTC", "ETH", "BTC"),
+            ("SOLBTC", "SOL", "BTC"),
+            ("LINKETH", "LINK", "ETH"),
+            ("BNBBUSD", "BNB", "BUSD"),
+            ("BTCEUR", "BTC", "EUR"),
+            # Exchange prefix (TradingView format)
+            ("BINANCE:BTCUSDT", "BTC", "USDT"),
+            ("BYBIT:ETHUSDT", "ETH", "USDT"),
+            ("OKX:BTC-USDT", "BTC", "USDT"),
+            ("KUCOIN:SOL/USDT", "SOL", "USDT"),
+            # Case insensitivity
+            ("btc/usdt", "BTC", "USDT"),
+            ("Btc-Usdt", "BTC", "USDT"),
+            ("btcusdt", "BTC", "USDT"),
+            # Whitespace handling
+            ("  BTC/USDT  ", "BTC", "USDT"),
+        ],
+        ids=[
+            "slash-BTC/USDT",
+            "slash-ETH/BTC",
+            "slash-SOL/USDC",
+            "hyphen-BTC-USDT",
+            "hyphen-ETH-BTC",
+            "hyphen-DOGE-USDT",
+            "underscore-BTC_USDT",
+            "underscore-ETH_USDC",
+            "concat-BTCUSDT",
+            "concat-ETHUSDT",
+            "concat-SOLUSDT",
+            "concat-DOGEUSDT",
+            "concat-XRPUSDT",
+            "concat-ETHBTC-quote",
+            "concat-SOLBTC-quote",
+            "concat-LINKETH-quote",
+            "concat-BNBBUSD",
+            "concat-BTCEUR-fiat",
+            "prefix-BINANCE",
+            "prefix-BYBIT",
+            "prefix-OKX",
+            "prefix-KUCOIN",
+            "case-lower",
+            "case-mixed",
+            "case-concat-lower",
+            "whitespace-padded",
+        ],
+    )
+    def test_parse_symbol_valid_formats(self, symbol, expected_base, expected_quote):
+        """Verify all valid symbol formats parse correctly."""
+        result = parse_symbol(symbol)
 
-    def test_parse_symbol_with_slash(self):
-        """Test parsing symbol with slash separator."""
-        from app.services.symbol_normalizer import parse_symbol
+        assert result.base == expected_base
+        assert result.quote == expected_quote
 
-        parsed = parse_symbol("BTC/USDT")
-        assert parsed.base == "BTC"
-        assert parsed.quote == "USDT"
-
-    def test_parse_symbol_with_hyphen(self):
-        """Test parsing symbol with hyphen separator."""
-        from app.services.symbol_normalizer import parse_symbol
-
-        parsed = parse_symbol("BTC-USDT")
-        assert parsed.base == "BTC"
-        assert parsed.quote == "USDT"
-
-    def test_parse_symbol_with_underscore(self):
-        """Test parsing symbol with underscore separator."""
-        from app.services.symbol_normalizer import parse_symbol
-
-        parsed = parse_symbol("BTC_USDT")
-        assert parsed.base == "BTC"
-        assert parsed.quote == "USDT"
-
-    def test_parse_symbol_lowercase(self):
-        """Test parsing lowercase symbol."""
-        from app.services.symbol_normalizer import parse_symbol
-
-        parsed = parse_symbol("btcusdt")
-        assert parsed.base == "BTC"
-        assert parsed.quote == "USDT"
-
-    def test_parse_symbol_various_quotes(self):
-        """Test parsing symbols with various quote currencies."""
-        from app.services.symbol_normalizer import parse_symbol
-
-        # USDT
-        parsed = parse_symbol("ETHUSDT")
-        assert parsed.base == "ETH"
-        assert parsed.quote == "USDT"
-
-        # USDC
-        parsed = parse_symbol("ETHUSDC")
-        assert parsed.base == "ETH"
-        assert parsed.quote == "USDC"
-
-        # BTC
-        parsed = parse_symbol("ETHBTC")
-        assert parsed.base == "ETH"
-        assert parsed.quote == "BTC"
-
-    def test_parse_symbol_with_exchange_prefix(self):
-        """Test parsing symbol with exchange prefix."""
-        from app.services.symbol_normalizer import parse_symbol
-
-        parsed = parse_symbol("BINANCE:BTCUSDT")
-        assert parsed.base == "BTC"
-        assert parsed.quote == "USDT"
-
-    def test_parse_invalid_symbol_raises(self):
-        """Test that invalid symbol raises ValueError."""
-        from app.services.symbol_normalizer import parse_symbol
-
+    @pytest.mark.parametrize(
+        "invalid_symbol",
+        [
+            "",  # Empty string
+            "   ",  # Whitespace only
+            "BTC",  # Single token, no quote detected
+            "INVALID",  # Unknown token
+            "X",  # Too short
+        ],
+        ids=["empty", "whitespace", "no-quote", "unknown", "too-short"],
+    )
+    def test_parse_symbol_invalid_raises(self, invalid_symbol):
+        """Verify invalid symbols raise ValueError."""
         with pytest.raises(ValueError):
-            parse_symbol("INVALID")
+            parse_symbol(invalid_symbol)
 
-    def test_parse_empty_symbol_raises(self):
-        """Test that empty symbol raises ValueError."""
-        from app.services.symbol_normalizer import parse_symbol
+    def test_parse_symbol_preserves_all_quote_currencies(self):
+        """
+        Verify all known quote currencies are detected.
 
-        with pytest.raises(ValueError):
-            parse_symbol("")
+        Bug prevented: New quote currency not recognized, causing
+        wrong symbol parsing.
+        """
+        for quote in QUOTE_CURRENCIES:
+            symbol = f"TEST{quote}"
+            result = parse_symbol(symbol)
+            assert result.quote == quote, f"Failed to detect quote: {quote}"
+            assert result.base == "TEST"
 
 
 class TestNormalizeExchange:
-    """Tests for normalize_exchange function."""
+    """
+    Tests for normalize_exchange() function.
 
-    def test_binance_variations(self):
-        """Test normalizing Binance variations."""
-        from app.services.symbol_normalizer import normalize_exchange
+    Bug prevented: Exchange aliases not recognized, causing
+    "unknown exchange" errors for valid exchanges.
+    """
 
-        assert normalize_exchange("binance") == "binance"
-        assert normalize_exchange("BINANCE") == "binance"
-        assert normalize_exchange("Binance") == "binance"
-        assert normalize_exchange("bin") == "binance"
+    @pytest.mark.parametrize(
+        "input_name,expected",
+        [
+            # Standard names
+            ("binance", "binance"),
+            ("bybit", "bybit"),
+            ("okx", "okx"),
+            ("gateio", "gateio"),
+            ("kucoin", "kucoin"),
+            ("mexc", "mexc"),
+            # Aliases
+            ("bin", "binance"),
+            ("okex", "okx"),
+            ("gate", "gateio"),
+            ("gate.io", "gateio"),
+            ("mxc", "mexc"),
+            # Case variations
+            ("BINANCE", "binance"),
+            ("Binance", "binance"),
+            ("BYBIT", "bybit"),
+            ("OKX", "okx"),
+            # Whitespace
+            ("  binance  ", "binance"),
+            (" bybit ", "bybit"),
+        ],
+        ids=[
+            "binance",
+            "bybit",
+            "okx",
+            "gateio",
+            "kucoin",
+            "mexc",
+            "alias-bin",
+            "alias-okex",
+            "alias-gate",
+            "alias-gate.io",
+            "alias-mxc",
+            "case-upper-binance",
+            "case-mixed-binance",
+            "case-upper-bybit",
+            "case-upper-okx",
+            "whitespace-binance",
+            "whitespace-bybit",
+        ],
+    )
+    def test_normalize_exchange_valid(self, input_name, expected):
+        """Verify valid exchange names normalize correctly."""
+        assert normalize_exchange(input_name) == expected
 
-    def test_bybit_variations(self):
-        """Test normalizing Bybit variations."""
-        from app.services.symbol_normalizer import normalize_exchange
+    @pytest.mark.parametrize(
+        "invalid_name",
+        [
+            "",
+            None,
+            "unknown",
+            "coinbase",
+            "ftx",
+            "kraken",
+        ],
+        ids=["empty", "none", "unknown", "coinbase", "ftx", "kraken"],
+    )
+    def test_normalize_exchange_invalid_returns_none(self, invalid_name):
+        """Verify invalid/unknown exchanges return None."""
+        assert normalize_exchange(invalid_name) is None
 
-        assert normalize_exchange("bybit") == "bybit"
-        assert normalize_exchange("BYBIT") == "bybit"
-        assert normalize_exchange("ByBit") == "bybit"
+    def test_all_aliases_map_to_supported_exchange(self):
+        """
+        Verify all defined aliases map to a supported exchange.
 
-    def test_kucoin_variations(self):
-        """Test normalizing KuCoin variations."""
-        from app.services.symbol_normalizer import normalize_exchange
+        Bug prevented: Alias pointing to non-existent exchange.
+        """
+        supported = get_supported_exchanges()
+        for alias, target in EXCHANGE_ALIASES.items():
+            assert target in supported, f"Alias '{alias}' maps to unsupported '{target}'"
 
-        assert normalize_exchange("kucoin") == "kucoin"
-        assert normalize_exchange("KUCOIN") == "kucoin"
-        assert normalize_exchange("KuCoin") == "kucoin"
 
-    def test_okx_variations(self):
-        """Test normalizing OKX variations."""
-        from app.services.symbol_normalizer import normalize_exchange
+class TestFormatForExchange:
+    """
+    Tests for format_for_exchange() and ParsedSymbol.format_for_exchange().
 
-        assert normalize_exchange("okx") == "okx"
-        assert normalize_exchange("OKX") == "okx"
-        assert normalize_exchange("okex") == "okx"
-        assert normalize_exchange("OKEX") == "okx"
+    Bug prevented: Symbol formatted incorrectly for exchange API,
+    causing API calls to fail.
+    """
 
-    def test_gateio_variations(self):
-        """Test normalizing Gate.io variations."""
-        from app.services.symbol_normalizer import normalize_exchange
+    @pytest.mark.parametrize(
+        "base,quote,exchange,expected",
+        [
+            # Binance: concatenated (BTCUSDT)
+            ("BTC", "USDT", "binance", "BTCUSDT"),
+            ("ETH", "USDT", "binance", "ETHUSDT"),
+            # Bybit: concatenated (BTCUSDT)
+            ("BTC", "USDT", "bybit", "BTCUSDT"),
+            ("SOL", "USDC", "bybit", "SOLUSDC"),
+            # OKX: hyphen (BTC-USDT)
+            ("BTC", "USDT", "okx", "BTC-USDT"),
+            ("ETH", "BTC", "okx", "ETH-BTC"),
+            # Gate.io: underscore (BTC_USDT)
+            ("BTC", "USDT", "gateio", "BTC_USDT"),
+            ("DOGE", "USDT", "gateio", "DOGE_USDT"),
+            # Kucoin: hyphen (BTC-USDT)
+            ("BTC", "USDT", "kucoin", "BTC-USDT"),
+            ("XRP", "USDC", "kucoin", "XRP-USDC"),
+            # MEXC: concatenated (BTCUSDT)
+            ("BTC", "USDT", "mexc", "BTCUSDT"),
+            ("LINK", "USDT", "mexc", "LINKUSDT"),
+        ],
+    )
+    def test_format_for_exchange(self, base, quote, exchange, expected):
+        """Verify symbol formatting matches exchange requirements."""
+        # Test via convenience function
+        assert format_for_exchange(base, quote, exchange) == expected
 
-        assert normalize_exchange("gateio") == "gateio"
-        assert normalize_exchange("gate.io") == "gateio"
-        assert normalize_exchange("GATEIO") == "gateio"
-        assert normalize_exchange("gate") == "gateio"
+        # Test via ParsedSymbol method
+        parsed = ParsedSymbol(base=base, quote=quote)
+        assert parsed.format_for_exchange(exchange) == expected
 
-    def test_mexc_variations(self):
-        """Test normalizing MEXC variations."""
-        from app.services.symbol_normalizer import normalize_exchange
-
-        assert normalize_exchange("mexc") == "mexc"
-        assert normalize_exchange("MEXC") == "mexc"
-        assert normalize_exchange("mxc") == "mexc"
-
-    def test_unknown_exchange(self):
-        """Test that unknown exchange returns None."""
-        from app.services.symbol_normalizer import normalize_exchange
-
-        assert normalize_exchange("unknown") is None
-        assert normalize_exchange("invalid_exchange") is None
-        assert normalize_exchange("") is None
+    def test_format_normalizes_case(self):
+        """Verify formatting normalizes to uppercase."""
+        result = format_for_exchange("btc", "usdt", "binance")
+        assert result == "BTCUSDT"
 
 
 class TestParsedSymbol:
-    """Tests for ParsedSymbol dataclass."""
+    """Tests for ParsedSymbol dataclass methods."""
 
-    def test_parsed_symbol_attributes(self):
-        """Test ParsedSymbol has correct attributes."""
-        from app.services.symbol_normalizer import ParsedSymbol
+    def test_display_format(self):
+        """
+        Verify display() returns human-readable format.
 
+        Bug prevented: Wrong format shown in Telegram messages.
+        """
         parsed = ParsedSymbol(base="BTC", quote="USDT")
+        assert parsed.display() == "BTC/USDT"
 
-        assert parsed.base == "BTC"
-        assert parsed.quote == "USDT"
+    def test_format_for_unknown_exchange_raises(self):
+        """Verify formatting for unknown exchange raises ValueError."""
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+        with pytest.raises(ValueError):
+            parsed.format_for_exchange("unknown_exchange")
 
     def test_parsed_symbol_equality(self):
-        """Test ParsedSymbol equality."""
-        from app.services.symbol_normalizer import ParsedSymbol
-
+        """Test ParsedSymbol equality comparison."""
         p1 = ParsedSymbol(base="BTC", quote="USDT")
         p2 = ParsedSymbol(base="BTC", quote="USDT")
         p3 = ParsedSymbol(base="ETH", quote="USDT")
@@ -178,67 +292,35 @@ class TestParsedSymbol:
         assert p1 == p2
         assert p1 != p3
 
-    def test_format_for_exchange(self):
-        """Test formatting symbol for different exchanges."""
-        from app.services.symbol_normalizer import ParsedSymbol
 
-        parsed = ParsedSymbol(base="BTC", quote="USDT")
+class TestIsValidExchange:
+    """Tests for is_valid_exchange() function."""
 
-        assert parsed.format_for_exchange("binance") == "BTCUSDT"
-        assert parsed.format_for_exchange("okx") == "BTC-USDT"
-        assert parsed.format_for_exchange("gateio") == "BTC_USDT"
-        assert parsed.format_for_exchange("kucoin") == "BTC-USDT"
+    def test_valid_exchanges_return_true(self):
+        """Verify all supported exchanges are valid."""
+        for exchange in get_supported_exchanges():
+            assert is_valid_exchange(exchange) is True
 
-    def test_display(self):
-        """Test display format."""
-        from app.services.symbol_normalizer import ParsedSymbol
-
-        parsed = ParsedSymbol(base="BTC", quote="USDT")
-        assert parsed.display() == "BTC/USDT"
-
-
-class TestFormatForExchange:
-    """Tests for format_for_exchange helper function."""
-
-    def test_format_for_binance(self):
-        """Test formatting for Binance."""
-        from app.services.symbol_normalizer import format_for_exchange
-
-        assert format_for_exchange("BTC", "USDT", "binance") == "BTCUSDT"
-
-    def test_format_for_okx(self):
-        """Test formatting for OKX."""
-        from app.services.symbol_normalizer import format_for_exchange
-
-        assert format_for_exchange("BTC", "USDT", "okx") == "BTC-USDT"
-
-    def test_format_for_gateio(self):
-        """Test formatting for Gate.io."""
-        from app.services.symbol_normalizer import format_for_exchange
-
-        assert format_for_exchange("BTC", "USDT", "gateio") == "BTC_USDT"
-
-
-class TestHelperFunctions:
-    """Tests for helper functions."""
-
-    def test_is_valid_exchange(self):
-        """Test is_valid_exchange function."""
-        from app.services.symbol_normalizer import is_valid_exchange
-
-        assert is_valid_exchange("binance") is True
-        assert is_valid_exchange("bybit") is True
+    def test_invalid_exchanges_return_false(self):
+        """Verify unsupported exchanges are invalid."""
+        assert is_valid_exchange("coinbase") is False
         assert is_valid_exchange("unknown") is False
+        assert is_valid_exchange("") is False
 
-    def test_get_supported_exchanges(self):
-        """Test get_supported_exchanges function."""
-        from app.services.symbol_normalizer import get_supported_exchanges
 
-        exchanges = get_supported_exchanges()
+class TestGetSupportedExchanges:
+    """Tests for get_supported_exchanges() function."""
 
-        assert "binance" in exchanges
-        assert "bybit" in exchanges
-        assert "okx" in exchanges
-        assert "gateio" in exchanges
-        assert "kucoin" in exchanges
-        assert "mexc" in exchanges
+    def test_returns_all_exchanges(self):
+        """Verify all expected exchanges are supported."""
+        supported = get_supported_exchanges()
+
+        expected = ["binance", "bybit", "okx", "gateio", "kucoin", "mexc"]
+        for exchange in expected:
+            assert exchange in supported
+
+    def test_returns_list(self):
+        """Verify return type is list."""
+        result = get_supported_exchanges()
+        assert isinstance(result, list)
+        assert len(result) > 0

@@ -1,9 +1,54 @@
 import aiosqlite
+import pytz
 from contextlib import asynccontextmanager
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from typing import AsyncGenerator
 
 from .config import settings, ensure_data_directory
+
+
+def get_period_boundaries(
+    start_date: str, end_date: str, tz_str: str | None = None
+) -> tuple[str, str]:
+    """
+    Convert start/end date strings to UTC timestamp boundaries.
+
+    Returns (start_utc, end_utc) where the period covers:
+    - From 00:00:00 of start_date in the configured timezone
+    - To 00:00:00 of (end_date + 1 day) in the configured timezone
+
+    This ensures periods start at 00:00 and end at 00:00 in the user's timezone.
+    """
+    tz_str = tz_str or settings.timezone
+    tz = pytz.timezone(tz_str)
+
+    # Parse start date and localize to 00:00:00 in user's timezone
+    local_start = tz.localize(datetime.strptime(start_date, "%Y-%m-%d"))
+
+    # Parse end date and get 00:00:00 of the NEXT day (exclusive end)
+    local_end_date = datetime.strptime(end_date, "%Y-%m-%d")
+    local_end = tz.localize(local_end_date + timedelta(days=1))
+
+    # Convert to UTC ISO format
+    utc_start = local_start.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    utc_end = local_end.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return utc_start, utc_end
+
+
+def get_before_date_boundary(date_str: str, tz_str: str | None = None) -> str:
+    """
+    Get the UTC timestamp for 00:00:00 of a date in the configured timezone.
+
+    Used for "before date" queries - returns the start of the day in UTC.
+    """
+    tz_str = tz_str or settings.timezone
+    tz = pytz.timezone(tz_str)
+
+    local_start = tz.localize(datetime.strptime(date_str, "%Y-%m-%d"))
+    utc_start = local_start.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return utc_start
 
 # SQL Schema
 SCHEMA = """
@@ -388,14 +433,11 @@ class Database:
         Add an exit record for a trade.
 
         Returns True if exit was added, False if it already existed (race condition).
+        Uses INSERT OR IGNORE to handle concurrent requests atomically.
         """
-        # Check if exit already exists (race condition protection)
-        if await self.has_exit(trade_id):
-            return False
-
-        await self.connection.execute(
+        cursor = await self.connection.execute(
             """
-            INSERT INTO exits (id, trade_id, exit_price, exit_time, fee_usdt,
+            INSERT OR IGNORE INTO exits (id, trade_id, exit_price, exit_time, fee_usdt,
                                exchange_timestamp, received_timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
@@ -410,7 +452,8 @@ class Database:
             ),
         )
         await self.connection.commit()
-        return True
+        # rowcount is 0 if INSERT was ignored (exit already existed)
+        return cursor.rowcount > 0
 
     # Symbol rules methods
     async def get_symbol_rules(
@@ -462,30 +505,32 @@ class Database:
 
     # Report methods
     async def get_trades_for_date(self, date: str) -> list[dict]:
-        """Get all closed trades for a specific date."""
+        """Get all closed trades for a specific date (in configured timezone)."""
+        start_utc, end_utc = get_period_boundaries(date, date)
         cursor = await self.connection.execute(
             """
             SELECT * FROM trades
-            WHERE status = 'closed' AND DATE(closed_at) = ?
+            WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
             """,
-            (date,),
+            (start_utc, end_utc),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
     async def get_equity_curve_data(self, date: str) -> list[dict]:
         """
-        Get equity curve data points for a specific date.
+        Get equity curve data points for a specific date (in configured timezone).
         Returns trades ordered by close time with their PnL.
         """
+        start_utc, end_utc = get_period_boundaries(date, date)
         cursor = await self.connection.execute(
             """
             SELECT closed_at, total_pnl_usdt
             FROM trades
-            WHERE status = 'closed' AND DATE(closed_at) = ?
+            WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
             ORDER BY closed_at ASC
             """,
-            (date,),
+            (start_utc, end_utc),
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -494,18 +539,19 @@ class Database:
         self, start_date: str | None, end_date: str | None
     ) -> list[dict]:
         """
-        Get equity curve data points for a date range or all-time.
+        Get equity curve data points for a date range or all-time (in configured timezone).
         Returns trades ordered by close time with their PnL.
         """
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT closed_at, total_pnl_usdt
                 FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 ORDER BY closed_at ASC
                 """,
-                (start_date, end_date),
+                (start_utc, end_utc),
             )
         else:
             cursor = await self.connection.execute(
@@ -523,39 +569,43 @@ class Database:
         """
         Get the cumulative realized PnL from all closed trades BEFORE the given date.
         This is used to start the equity curve from the correct previous value.
+        Date boundary is 00:00 in the configured timezone.
         """
+        before_utc = get_before_date_boundary(date)
         cursor = await self.connection.execute(
             """
             SELECT COALESCE(SUM(total_pnl_usdt), 0) as cumulative_pnl
             FROM trades
-            WHERE status = 'closed' AND DATE(closed_at) < ?
+            WHERE status = 'closed' AND closed_at < ?
             """,
-            (date,),
+            (before_utc,),
         )
         row = await cursor.fetchone()
         return row["cumulative_pnl"] if row else 0.0
 
     async def get_trade_counts_for_date(self, date: str) -> dict:
         """
-        Get trade count breakdown for a specific date.
+        Get trade count breakdown for a specific date (in configured timezone).
 
         Returns:
             Dict with:
             - opened_today: Trades opened on this date
             - closed_today: Trades closed on this date
         """
+        start_utc, end_utc = get_period_boundaries(date, date)
+
         # Trades opened today
         cursor = await self.connection.execute(
-            "SELECT COUNT(*) as count FROM trades WHERE DATE(created_at) = ?",
-            (date,),
+            "SELECT COUNT(*) as count FROM trades WHERE created_at >= ? AND created_at < ?",
+            (start_utc, end_utc),
         )
         row = await cursor.fetchone()
         opened_today = row["count"] if row else 0
 
         # Trades closed today
         cursor = await self.connection.execute(
-            "SELECT COUNT(*) as count FROM trades WHERE status = 'closed' AND DATE(closed_at) = ?",
-            (date,),
+            "SELECT COUNT(*) as count FROM trades WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?",
+            (start_utc, end_utc),
         )
         row = await cursor.fetchone()
         closed_today = row["count"] if row else 0
@@ -569,7 +619,7 @@ class Database:
         self, start_date: str | None, end_date: str | None
     ) -> dict:
         """
-        Get trade count breakdown for a date range.
+        Get trade count breakdown for a date range (in configured timezone).
 
         Args:
             start_date: Start date (YYYY-MM-DD) or None for all-time
@@ -582,9 +632,10 @@ class Database:
         """
         # Trades opened in period
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
-                "SELECT COUNT(*) as count FROM trades WHERE DATE(created_at) BETWEEN ? AND ?",
-                (start_date, end_date),
+                "SELECT COUNT(*) as count FROM trades WHERE created_at >= ? AND created_at < ?",
+                (start_utc, end_utc),
             )
         else:
             cursor = await self.connection.execute(
@@ -595,9 +646,10 @@ class Database:
 
         # Trades closed in period
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
-                "SELECT COUNT(*) as count FROM trades WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?",
-                (start_date, end_date),
+                "SELECT COUNT(*) as count FROM trades WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?",
+                (start_utc, end_utc),
             )
         else:
             cursor = await self.connection.execute(
@@ -617,7 +669,7 @@ class Database:
         self, start_date: str | None, end_date: str | None
     ) -> tuple[float, int]:
         """
-        Get realized PnL and trade count for a date range.
+        Get realized PnL and trade count for a date range (in configured timezone).
 
         Args:
             start_date: Start date (YYYY-MM-DD) or None for all-time
@@ -627,13 +679,14 @@ class Database:
             Tuple of (total_pnl, trade_count)
         """
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT COALESCE(SUM(total_pnl_usdt), 0) as pnl, COUNT(*) as count
                 FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 """,
-                (start_date, end_date),
+                (start_utc, end_utc),
             )
         else:
             cursor = await self.connection.execute(
@@ -649,7 +702,7 @@ class Database:
         self, start_date: str | None, end_date: str | None
     ) -> dict:
         """
-        Get trading statistics for a date range.
+        Get trading statistics for a date range (in configured timezone).
 
         Args:
             start_date: Start date (YYYY-MM-DD) or None for all-time
@@ -659,12 +712,13 @@ class Database:
             Dict with statistics: total_trades, win_rate, total_pnl, etc.
         """
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT total_pnl_usdt FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 """,
-                (start_date, end_date),
+                (start_utc, end_utc),
             )
         else:
             cursor = await self.connection.execute(
@@ -707,20 +761,21 @@ class Database:
     async def get_best_pairs_for_period(
         self, start_date: str | None, end_date: str | None, limit: int = 5
     ) -> list[dict]:
-        """Get top profitable pairs for a date range."""
+        """Get top profitable pairs for a date range (in configured timezone)."""
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT base || '/' || quote as pair,
                        SUM(total_pnl_usdt) as pnl,
                        COUNT(*) as trades
                 FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 GROUP BY base, quote
                 ORDER BY pnl DESC
                 LIMIT ?
                 """,
-                (start_date, end_date, limit),
+                (start_utc, end_utc, limit),
             )
         else:
             cursor = await self.connection.execute(
@@ -741,20 +796,21 @@ class Database:
     async def get_worst_pairs_for_period(
         self, start_date: str | None, end_date: str | None, limit: int = 5
     ) -> list[dict]:
-        """Get top losing pairs for a date range."""
+        """Get top losing pairs for a date range (in configured timezone)."""
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT base || '/' || quote as pair,
                        SUM(total_pnl_usdt) as pnl,
                        COUNT(*) as trades
                 FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 GROUP BY base, quote
                 ORDER BY pnl ASC
                 LIMIT ?
                 """,
-                (start_date, end_date, limit),
+                (start_utc, end_utc, limit),
             )
         else:
             cursor = await self.connection.execute(
@@ -775,16 +831,17 @@ class Database:
     async def get_trades_for_period(
         self, start_date: str | None, end_date: str | None, limit: int = 50
     ) -> list[dict]:
-        """Get closed trades for a date range."""
+        """Get closed trades for a date range (in configured timezone)."""
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT * FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 ORDER BY closed_at DESC
                 LIMIT ?
                 """,
-                (start_date, end_date, limit),
+                (start_utc, end_utc, limit),
             )
         else:
             cursor = await self.connection.execute(
@@ -803,7 +860,7 @@ class Database:
         self, start_date: str | None, end_date: str | None
     ) -> dict:
         """
-        Calculate drawdown metrics for a date range.
+        Calculate drawdown metrics for a date range (in configured timezone).
 
         Uses account snapshot approach: starts equity from cumulative PnL before
         period + period capital, giving realistic drawdown percentages.
@@ -814,13 +871,14 @@ class Database:
         """
         # Get trades for PnL calculation
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT total_pnl_usdt, closed_at FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 ORDER BY closed_at ASC
                 """,
-                (start_date, end_date),
+                (start_utc, end_utc),
             )
         else:
             cursor = await self.connection.execute(
@@ -835,14 +893,15 @@ class Database:
 
         # Get total capital deployed for the period
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             capital_cursor = await self.connection.execute(
                 """
                 SELECT COALESCE(SUM(p.capital_usdt), 0) as total_capital
                 FROM pyramids p
                 JOIN trades t ON p.trade_id = t.id
-                WHERE t.status = 'closed' AND DATE(t.closed_at) BETWEEN ? AND ?
+                WHERE t.status = 'closed' AND t.closed_at >= ? AND t.closed_at < ?
                 """,
-                (start_date, end_date),
+                (start_utc, end_utc),
             )
         else:
             capital_cursor = await self.connection.execute(
@@ -856,40 +915,26 @@ class Database:
         capital_row = await capital_cursor.fetchone()
         total_capital = capital_row["total_capital"] if capital_row else 0
 
-        # Get cumulative PnL before the period for snapshot approach
-        cumulative_pnl_before = 0.0
-        if start_date:
-            before_cursor = await self.connection.execute(
-                """
-                SELECT COALESCE(SUM(total_pnl_usdt), 0) as cumulative_pnl
-                FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) < ?
-                """,
-                (start_date,),
-            )
-            before_row = await before_cursor.fetchone()
-            cumulative_pnl_before = before_row["cumulative_pnl"] if before_row else 0.0
-
+        # Period reports start fresh from 0 - no previous cumulative PnL
         if not rows:
-            starting_equity = cumulative_pnl_before + total_capital
             return {
-                "current_equity": starting_equity,
-                "peak": starting_equity,
+                "current_equity": total_capital,
+                "peak": total_capital,
                 "current_drawdown": 0.0,
                 "max_drawdown": 0.0,
                 "max_drawdown_percent": 0.0,
                 "trade_count": 0,
             }
 
-        # Start from account snapshot: previous cumulative PnL + period capital
-        starting_equity = cumulative_pnl_before + total_capital
+        # Start from period's capital only (not previous cumulative PnL)
+        starting_equity = total_capital
         equity = starting_equity
         peak = starting_equity
         max_dd = 0.0
 
-        # Track PnL separately for percentage calculation (relative to peak PnL)
-        pnl = cumulative_pnl_before
-        peak_pnl = cumulative_pnl_before
+        # Track PnL from 0 for this period only
+        pnl = 0.0
+        peak_pnl = 0.0
 
         for row in rows:
             trade_pnl = row["total_pnl_usdt"] or 0
@@ -926,19 +971,20 @@ class Database:
         self, start_date: str | None, end_date: str | None
     ) -> dict:
         """
-        Calculate win/loss streaks for a date range.
+        Calculate win/loss streaks for a date range (in configured timezone).
 
         Returns:
             Dict with current, longest_win, longest_loss
         """
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT total_pnl_usdt FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 ORDER BY closed_at DESC
                 """,
-                (start_date, end_date),
+                (start_utc, end_utc),
             )
         else:
             cursor = await self.connection.execute(
@@ -1000,19 +1046,20 @@ class Database:
     async def get_exchange_stats_for_period(
         self, start_date: str | None, end_date: str | None
     ) -> list[dict]:
-        """Get PnL breakdown by exchange for a date range."""
+        """Get PnL breakdown by exchange for a date range (in configured timezone)."""
         if start_date and end_date:
+            start_utc, end_utc = get_period_boundaries(start_date, end_date)
             cursor = await self.connection.execute(
                 """
                 SELECT exchange,
                        SUM(total_pnl_usdt) as pnl,
                        COUNT(*) as trades
                 FROM trades
-                WHERE status = 'closed' AND DATE(closed_at) BETWEEN ? AND ?
+                WHERE status = 'closed' AND closed_at >= ? AND closed_at < ?
                 GROUP BY exchange
                 ORDER BY pnl DESC
                 """,
-                (start_date, end_date),
+                (start_utc, end_utc),
             )
         else:
             cursor = await self.connection.execute(

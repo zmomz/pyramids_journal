@@ -123,16 +123,19 @@ async def webhook(
         logger.error(f"Failed to parse JSON body: {e}")
         raise HTTPException(status_code=400, detail="Invalid JSON payload")
 
+    # Log raw payload for debugging
+    logger.info(f"Received webhook payload: {body}")
+
     # Parse the new payload structure
     try:
         alert = TradingViewAlert(**body)
     except ValidationError as e:
-        logger.error(f"Payload validation error: {e}")
+        logger.error(f"Payload validation error: {e} | Raw payload: {body}")
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
     logger.info(
-        f"Received signal: {alert.action} {alert.symbol} on {alert.exchange} "
-        f"(timeframe={alert.timeframe}, position_side={alert.position_side})"
+        f"Parsed signal: {alert.action} {alert.symbol} @ {alert.price} on {alert.exchange} "
+        f"(tf={alert.timeframe}, side={alert.position_side}, contracts={alert.contracts})"
     )
 
     # Check if processing is paused
@@ -173,7 +176,10 @@ async def webhook(
 
     # Return response
     if not result.success:
-        logger.warning(f"Signal processing failed: {result.message} (error={result.error})")
+        logger.warning(
+            f"Signal processing failed: {result.message} (error={result.error}) | "
+            f"Signal: {alert.action} {alert.symbol} @ {alert.price} on {alert.exchange}"
+        )
         return WebhookResponse(
             success=False,
             message=result.message,

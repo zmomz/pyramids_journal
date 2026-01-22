@@ -101,21 +101,28 @@ class ExchangeService:
 
         # Check cache first
         if use_cache:
-            cached = await db.get_symbol_rules(normalized_exchange, base, quote)
-            if cached:
-                # Check if cache is still valid
-                updated_at = datetime.fromisoformat(cached["updated_at"])
-                if datetime.now(timezone.utc) - updated_at < timedelta(hours=CACHE_EXPIRY_HOURS):
-                    logger.debug(f"Using cached symbol info for {base}/{quote} on {exchange}")
-                    return SymbolInfo(
-                        base=cached["base"],
-                        quote=cached["quote"],
-                        price_precision=cached["price_precision"],
-                        qty_precision=cached["qty_precision"],
-                        min_qty=cached["min_qty"],
-                        min_notional=cached["min_notional"],
-                        tick_size=cached["tick_size"],
-                    )
+            try:
+                cached = await db.get_symbol_rules(normalized_exchange, base, quote)
+                if cached:
+                    # Check if cache is still valid
+                    updated_at = datetime.fromisoformat(cached["updated_at"])
+                    # Ensure timezone-aware for comparison (handle naive datetimes from old data)
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) - updated_at < timedelta(hours=CACHE_EXPIRY_HOURS):
+                        logger.debug(f"Using cached symbol info for {base}/{quote} on {exchange}")
+                        return SymbolInfo(
+                            base=cached["base"],
+                            quote=cached["quote"],
+                            price_precision=cached["price_precision"],
+                            qty_precision=cached["qty_precision"],
+                            min_qty=cached["min_qty"],
+                            min_notional=cached["min_notional"],
+                            tick_size=cached["tick_size"],
+                        )
+            except (TypeError, ValueError, KeyError) as e:
+                # Cache data is corrupt or incompatible - fetch fresh data
+                logger.warning(f"Cache error for {base}/{quote} on {exchange}, refreshing: {e}")
 
         # Fetch from exchange
         adapter_class = cls.get_exchange_adapter(exchange)

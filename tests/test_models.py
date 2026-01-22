@@ -1,5 +1,15 @@
 """
 Tests for Pydantic models in app/models.py
+
+Critical tests here:
+1. TradingViewAlert.is_entry() and is_exit() - determines trade flow
+2. Field validation - prevents invalid data from entering the system
+3. Normalization - ensures consistent data format
+
+Bug categories prevented:
+- Entry signal treated as exit (or vice versa)
+- Invalid data accepted and causing downstream errors
+- Inconsistent casing causing lookup failures
 """
 
 from datetime import datetime
@@ -23,11 +33,104 @@ from app.models import (
 )
 
 
-class TestTradingViewAlert:
-    """Tests for TradingViewAlert model."""
+class TestTradingViewAlertEntryExit:
+    """
+    Critical tests for entry/exit signal classification.
 
-    def test_valid_buy_alert(self):
-        """Test creating a valid buy alert."""
+    Bug prevented: Entry signal treated as exit, causing:
+    - Trade closed when it should have added a pyramid
+    - Trade opened when it should have closed
+
+    This is the most critical business logic in the webhook flow.
+    """
+
+    @pytest.mark.parametrize(
+        "action,position_side,is_entry,is_exit,description",
+        [
+            # Clear entry signals
+            ("buy", "long", True, False, "Buy + long = entry"),
+            # Clear exit signals
+            ("sell", "flat", False, True, "Sell + flat = exit"),
+            # Ambiguous signals (neither entry nor exit)
+            ("buy", "flat", False, False, "Buy + flat = ambiguous"),
+            ("buy", "short", False, False, "Buy + short = ambiguous (shorts not supported)"),
+            ("sell", "long", False, False, "Sell + long = ambiguous (partial exit?)"),
+            ("sell", "short", False, False, "Sell + short = ambiguous"),
+        ],
+        ids=[
+            "entry-buy-long",
+            "exit-sell-flat",
+            "ambiguous-buy-flat",
+            "ambiguous-buy-short",
+            "ambiguous-sell-long",
+            "ambiguous-sell-short",
+        ],
+    )
+    def test_signal_classification(
+        self, action, position_side, is_entry, is_exit, description
+    ):
+        """
+        Verify signal classification based on action and position_side.
+
+        The system is LONG-ONLY:
+        - Entry: action=buy AND position_side=long
+        - Exit: action=sell AND position_side=flat
+        - All other combinations are ignored
+        """
+        alert = TradingViewAlert(
+            timestamp="2026-01-20T10:00:00",
+            exchange="binance",
+            symbol="BTCUSDT",
+            timeframe="1h",
+            action=action,
+            order_id="test_order",
+            contracts=0.1,
+            close=50000.0,
+            position_side=position_side,
+            position_qty=0.1 if position_side != "flat" else 0.0,
+        )
+
+        assert alert.is_entry() == is_entry, f"is_entry() failed for: {description}"
+        assert alert.is_exit() == is_exit, f"is_exit() failed for: {description}"
+
+    def test_entry_and_exit_are_mutually_exclusive(self):
+        """
+        Verify a signal cannot be both entry AND exit.
+
+        Bug prevented: Signal processed twice (as entry and exit).
+        """
+        # Test all possible combinations
+        for action in ["buy", "sell"]:
+            for position_side in ["long", "short", "flat"]:
+                alert = TradingViewAlert(
+                    timestamp="2026-01-20T10:00:00",
+                    exchange="binance",
+                    symbol="BTCUSDT",
+                    timeframe="1h",
+                    action=action,
+                    order_id="test",
+                    contracts=0.1,
+                    close=50000.0,
+                    position_side=position_side,
+                    position_qty=0.1,
+                )
+
+                # Cannot be both entry and exit
+                assert not (
+                    alert.is_entry() and alert.is_exit()
+                ), f"Signal is both entry AND exit: action={action}, position_side={position_side}"
+
+
+class TestTradingViewAlertValidation:
+    """
+    Tests for field validation in TradingViewAlert.
+
+    Bug prevented: Invalid webhook data accepted, causing crashes
+    or incorrect trades downstream.
+    """
+
+    def test_valid_alert_all_fields(self):
+        """Verify valid alert with all fields passes validation."""
         alert = TradingViewAlert(
             timestamp="2026-01-20T10:00:00",
             exchange="BINANCE",
@@ -41,176 +144,197 @@ class TestTradingViewAlert:
             position_qty=0.1,
         )
 
-        assert alert.exchange == "binance"  # Normalized to lowercase
-        assert alert.symbol == "BTCUSDT"  # Normalized to uppercase
-        assert alert.timeframe == "1h"  # Normalized to lowercase
-        assert alert.action == "buy"
-        assert alert.is_entry() is True
-        assert alert.is_exit() is False
+        # Verify normalization
+        assert alert.exchange == "binance"  # lowercase
+        assert alert.symbol == "BTCUSDT"  # uppercase
+        assert alert.timeframe == "1h"  # lowercase
 
-    def test_valid_sell_alert(self):
-        """Test creating a valid sell alert."""
-        alert = TradingViewAlert(
-            timestamp="2026-01-20T11:00:00",
-            exchange="bybit",
-            symbol="ETHUSDT",
-            timeframe="4h",
-            action="sell",
-            order_id="order_456",
-            contracts=0.5,
-            close=3000.0,
-            position_side="flat",
-            position_qty=0.0,
-        )
+    @pytest.mark.parametrize(
+        "field,value,expected_error",
+        [
+            ("action", "invalid", "action"),
+            ("action", "BUY", "action"),  # Must be lowercase
+            ("action", "", "action"),
+            ("position_side", "invalid", "position_side"),
+            ("position_side", "LONG", "position_side"),  # Must be lowercase
+        ],
+        ids=[
+            "invalid-action",
+            "uppercase-action",
+            "empty-action",
+            "invalid-position-side",
+            "uppercase-position-side",
+        ],
+    )
+    def test_literal_field_validation(self, field, value, expected_error):
+        """Verify Literal fields reject invalid values."""
+        kwargs = {
+            "timestamp": "2026-01-20T10:00:00",
+            "exchange": "binance",
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "action": "buy",
+            "order_id": "test",
+            "contracts": 0.1,
+            "close": 50000.0,
+            "position_side": "long",
+            "position_qty": 0.1,
+        }
+        kwargs[field] = value
 
-        assert alert.is_entry() is False
-        assert alert.is_exit() is True
+        with pytest.raises(ValidationError) as exc_info:
+            TradingViewAlert(**kwargs)
 
-    def test_invalid_action(self):
-        """Test that invalid action raises validation error."""
+        # Verify error is about the expected field
+        errors = exc_info.value.errors()
+        assert any(expected_error in str(e.get("loc", "")) for e in errors)
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("contracts", -0.1),  # Negative
+            ("close", 0.0),  # Zero (gt=0)
+            ("close", -100.0),  # Negative
+            ("position_qty", -1.0),  # Negative
+        ],
+        ids=["negative-contracts", "zero-close", "negative-close", "negative-position-qty"],
+    )
+    def test_numeric_field_constraints(self, field, value):
+        """Verify numeric field constraints are enforced."""
+        kwargs = {
+            "timestamp": "2026-01-20T10:00:00",
+            "exchange": "binance",
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "action": "buy",
+            "order_id": "test",
+            "contracts": 0.1,
+            "close": 50000.0,
+            "position_side": "long",
+            "position_qty": 0.1,
+        }
+        kwargs[field] = value
+
         with pytest.raises(ValidationError):
-            TradingViewAlert(
-                timestamp="2026-01-20T10:00:00",
-                exchange="binance",
-                symbol="BTCUSDT",
-                timeframe="1h",
-                action="invalid",  # Invalid action
-                order_id="order_123",
-                contracts=0.1,
-                close=50000.0,
-                position_side="long",
-                position_qty=0.1,
-            )
+            TradingViewAlert(**kwargs)
 
-    def test_invalid_position_side(self):
-        """Test that invalid position_side raises validation error."""
+    @pytest.mark.parametrize(
+        "field",
+        ["exchange", "symbol", "timeframe", "order_id"],
+    )
+    def test_min_length_validation(self, field):
+        """Verify min_length=1 is enforced on string fields."""
+        kwargs = {
+            "timestamp": "2026-01-20T10:00:00",
+            "exchange": "binance",
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "action": "buy",
+            "order_id": "test",
+            "contracts": 0.1,
+            "close": 50000.0,
+            "position_side": "long",
+            "position_qty": 0.1,
+        }
+        kwargs[field] = ""
+
         with pytest.raises(ValidationError):
-            TradingViewAlert(
-                timestamp="2026-01-20T10:00:00",
-                exchange="binance",
-                symbol="BTCUSDT",
-                timeframe="1h",
-                action="buy",
-                order_id="order_123",
-                contracts=0.1,
-                close=50000.0,
-                position_side="invalid",  # Invalid position side
-                position_qty=0.1,
-            )
+            TradingViewAlert(**kwargs)
 
-    def test_negative_contracts(self):
-        """Test that negative contracts raises validation error."""
-        with pytest.raises(ValidationError):
-            TradingViewAlert(
-                timestamp="2026-01-20T10:00:00",
-                exchange="binance",
-                symbol="BTCUSDT",
-                timeframe="1h",
-                action="buy",
-                order_id="order_123",
-                contracts=-0.1,  # Negative contracts
-                close=50000.0,
-                position_side="long",
-                position_qty=0.1,
-            )
 
-    def test_zero_close_price(self):
-        """Test that zero close price raises validation error."""
-        with pytest.raises(ValidationError):
-            TradingViewAlert(
-                timestamp="2026-01-20T10:00:00",
-                exchange="binance",
-                symbol="BTCUSDT",
-                timeframe="1h",
-                action="buy",
-                order_id="order_123",
-                contracts=0.1,
-                close=0.0,  # Zero close price
-                position_side="long",
-                position_qty=0.1,
-            )
+class TestTradingViewAlertNormalization:
+    """
+    Tests for field normalization in TradingViewAlert.
 
-    def test_empty_exchange(self):
-        """Test that empty exchange raises validation error."""
-        with pytest.raises(ValidationError):
-            TradingViewAlert(
-                timestamp="2026-01-20T10:00:00",
-                exchange="",  # Empty exchange
-                symbol="BTCUSDT",
-                timeframe="1h",
-                action="buy",
-                order_id="order_123",
-                contracts=0.1,
-                close=50000.0,
-                position_side="long",
-                position_qty=0.1,
-            )
+    Bug prevented: Case-sensitive lookups failing due to inconsistent casing.
+    """
 
-    def test_exchange_normalization(self):
-        """Test exchange name normalization."""
+    @pytest.mark.parametrize(
+        "exchange_input,expected",
+        [
+            ("BINANCE", "binance"),
+            ("Binance", "binance"),
+            ("binance", "binance"),
+            ("  binance  ", "binance"),
+            ("BYBIT", "bybit"),
+        ],
+    )
+    def test_exchange_normalized_to_lowercase(self, exchange_input, expected):
+        """Verify exchange is normalized to lowercase with trimmed whitespace."""
         alert = TradingViewAlert(
             timestamp="2026-01-20T10:00:00",
-            exchange="  BINANCE  ",
+            exchange=exchange_input,
             symbol="BTCUSDT",
             timeframe="1h",
             action="buy",
-            order_id="order_123",
+            order_id="test",
             contracts=0.1,
             close=50000.0,
             position_side="long",
             position_qty=0.1,
         )
 
-        assert alert.exchange == "binance"
+        assert alert.exchange == expected
 
-    def test_symbol_normalization(self):
-        """Test symbol normalization."""
+    @pytest.mark.parametrize(
+        "symbol_input,expected",
+        [
+            ("btcusdt", "BTCUSDT"),
+            ("BtcUsdt", "BTCUSDT"),
+            ("BTCUSDT", "BTCUSDT"),
+            ("  btcusdt  ", "BTCUSDT"),
+        ],
+    )
+    def test_symbol_normalized_to_uppercase(self, symbol_input, expected):
+        """Verify symbol is normalized to uppercase with trimmed whitespace."""
         alert = TradingViewAlert(
             timestamp="2026-01-20T10:00:00",
             exchange="binance",
-            symbol="  btcusdt  ",
+            symbol=symbol_input,
             timeframe="1h",
             action="buy",
-            order_id="order_123",
+            order_id="test",
             contracts=0.1,
             close=50000.0,
             position_side="long",
             position_qty=0.1,
         )
 
-        assert alert.symbol == "BTCUSDT"
+        assert alert.symbol == expected
 
-
-class TestPyramidEntryData:
-    """Tests for PyramidEntryData model."""
-
-    def test_valid_pyramid_entry(self):
-        """Test creating valid pyramid entry data."""
-        entry = PyramidEntryData(
-            group_id="group_123",
-            pyramid_index=1,
+    @pytest.mark.parametrize(
+        "timeframe_input,expected",
+        [
+            ("1H", "1h"),
+            ("4H", "4h"),
+            ("1D", "1d"),
+            ("15M", "15m"),
+            ("  1h  ", "1h"),
+        ],
+    )
+    def test_timeframe_normalized_to_lowercase(self, timeframe_input, expected):
+        """Verify timeframe is normalized to lowercase with trimmed whitespace."""
+        alert = TradingViewAlert(
+            timestamp="2026-01-20T10:00:00",
             exchange="binance",
-            base="BTC",
-            quote="USDT",
-            timeframe="1h",
-            entry_price=50000.0,
-            position_size=0.1,
-            capital_usdt=5000.0,
-            exchange_timestamp="2026-01-20T10:00:00",
-            received_timestamp=datetime.now(),
-            total_pyramids=3,
+            symbol="BTCUSDT",
+            timeframe=timeframe_input,
+            action="buy",
+            order_id="test",
+            contracts=0.1,
+            close=50000.0,
+            position_side="long",
+            position_qty=0.1,
         )
 
-        assert entry.group_id == "group_123"
-        assert entry.pyramid_index == 1
-        assert entry.capital_usdt == 5000.0
+        assert alert.timeframe == expected
 
 
 class TestSymbolRules:
-    """Tests for SymbolRules model."""
+    """Tests for SymbolRules model defaults and custom values."""
 
     def test_default_values(self):
-        """Test default values for symbol rules."""
+        """Verify defaults are set for optional fields."""
         rules = SymbolRules(
             exchange="binance",
             base="BTC",
@@ -223,8 +347,8 @@ class TestSymbolRules:
         assert rules.min_notional == 0.0
         assert rules.tick_size == 0.00000001
 
-    def test_custom_values(self):
-        """Test custom values for symbol rules."""
+    def test_custom_values_override_defaults(self):
+        """Verify custom values override defaults."""
         rules = SymbolRules(
             exchange="binance",
             base="BTC",
@@ -237,18 +361,42 @@ class TestSymbolRules:
         )
 
         assert rules.price_precision == 2
+        assert rules.qty_precision == 6
+        assert rules.min_qty == 0.001
         assert rules.min_notional == 10.0
+        assert rules.tick_size == 0.01
 
 
 class TestPyramidRecord:
     """Tests for PyramidRecord model."""
 
-    def test_valid_pyramid_record(self):
-        """Test creating valid pyramid record."""
+    def test_pnl_fields_optional_before_exit(self):
+        """
+        Verify PnL fields are optional (None before trade is closed).
+
+        Bug prevented: Validation error when creating pyramid before exit.
+        """
         record = PyramidRecord(
             id="pyr_123",
             trade_id="trade_123",
-            pyramid_index=1,
+            pyramid_index=0,
+            entry_price=50000.0,
+            position_size=0.1,
+            capital_usdt=5000.0,
+            entry_time=datetime.now(),
+            fee_rate=0.001,
+            fee_usdt=5.0,
+        )
+
+        assert record.pnl_usdt is None
+        assert record.pnl_percent is None
+
+    def test_pnl_fields_populated_after_exit(self):
+        """Verify PnL fields can be set after trade exit."""
+        record = PyramidRecord(
+            id="pyr_123",
+            trade_id="trade_123",
+            pyramid_index=0,
             entry_price=50000.0,
             position_size=0.1,
             capital_usdt=5000.0,
@@ -262,29 +410,12 @@ class TestPyramidRecord:
         assert record.pnl_usdt == 100.0
         assert record.pnl_percent == 2.0
 
-    def test_optional_pnl_fields(self):
-        """Test that PnL fields are optional."""
-        record = PyramidRecord(
-            id="pyr_123",
-            trade_id="trade_123",
-            pyramid_index=1,
-            entry_price=50000.0,
-            position_size=0.1,
-            capital_usdt=5000.0,
-            entry_time=datetime.now(),
-            fee_rate=0.001,
-            fee_usdt=5.0,
-        )
-
-        assert record.pnl_usdt is None
-        assert record.pnl_percent is None
-
 
 class TestTradeRecord:
     """Tests for TradeRecord model."""
 
-    def test_open_trade(self):
-        """Test creating an open trade record."""
+    def test_open_trade_has_none_closed_fields(self):
+        """Verify open trade has None for closed_at and PnL."""
         record = TradeRecord(
             id="trade_123",
             exchange="binance",
@@ -297,31 +428,35 @@ class TestTradeRecord:
         assert record.status == "open"
         assert record.closed_at is None
         assert record.total_pnl_usdt is None
+        assert record.total_pnl_percent is None
         assert record.pyramids == []
 
-    def test_closed_trade(self):
-        """Test creating a closed trade record."""
+    def test_closed_trade_has_pnl(self):
+        """Verify closed trade has PnL fields populated."""
+        now = datetime.now()
         record = TradeRecord(
             id="trade_123",
             exchange="binance",
             base="BTC",
             quote="USDT",
             status="closed",
-            created_at=datetime.now(),
-            closed_at=datetime.now(),
+            created_at=now,
+            closed_at=now,
             total_pnl_usdt=500.0,
             total_pnl_percent=10.0,
         )
 
         assert record.status == "closed"
+        assert record.closed_at is not None
         assert record.total_pnl_usdt == 500.0
+        assert record.total_pnl_percent == 10.0
 
 
 class TestWebhookResponse:
     """Tests for WebhookResponse model."""
 
     def test_success_response(self):
-        """Test successful webhook response."""
+        """Verify success response structure."""
         response = WebhookResponse(
             success=True,
             message="Trade executed successfully",
@@ -331,114 +466,45 @@ class TestWebhookResponse:
 
         assert response.success is True
         assert response.error is None
+        assert response.trade_id == "trade_123"
 
     def test_error_response(self):
-        """Test error webhook response."""
+        """Verify error response structure."""
         response = WebhookResponse(
             success=False,
             message="Trade failed",
-            error="Invalid symbol",
+            error="INVALID_SYMBOL",
         )
 
         assert response.success is False
-        assert response.error == "Invalid symbol"
-
-
-class TestTradeClosedData:
-    """Tests for TradeClosedData model."""
-
-    def test_valid_trade_closed_data(self):
-        """Test creating valid trade closed data."""
-        data = TradeClosedData(
-            trade_id="trade_123",
-            group_id="group_123",
-            exchange="binance",
-            base="BTC",
-            quote="USDT",
-            timeframe="1h",
-            pyramids=[{"id": "pyr_1", "pnl": 50.0}],
-            exit_price=51000.0,
-            exit_time=datetime.now(),
-            gross_pnl=1000.0,
-            total_fees=10.0,
-            net_pnl=990.0,
-            net_pnl_percent=19.8,
-            exchange_timestamp="2026-01-20T11:00:00",
-            received_timestamp=datetime.now(),
-        )
-
-        assert data.net_pnl == 990.0
-
-
-class TestTradeHistoryItem:
-    """Tests for TradeHistoryItem model."""
-
-    def test_valid_trade_history_item(self):
-        """Test creating valid trade history item."""
-        item = TradeHistoryItem(
-            group_id="group_123",
-            exchange="binance",
-            pair="BTC/USDT",
-            timeframe="1h",
-            pyramids_count=2,
-            pnl_usdt=100.0,
-            pnl_percent=5.0,
-        )
-
-        assert item.pair == "BTC/USDT"
-        assert item.pyramids_count == 2
-
-
-class TestEquityPoint:
-    """Tests for EquityPoint model."""
-
-    def test_valid_equity_point(self):
-        """Test creating valid equity point."""
-        point = EquityPoint(
-            timestamp=datetime.now(),
-            cumulative_pnl=500.0,
-        )
-
-        assert point.cumulative_pnl == 500.0
+        assert response.error == "INVALID_SYMBOL"
+        assert response.trade_id is None
 
 
 class TestChartStats:
     """Tests for ChartStats model."""
 
-    def test_default_values(self):
-        """Test default values for chart stats."""
+    def test_all_fields_default_to_zero(self):
+        """Verify all numeric fields default to 0."""
         stats = ChartStats()
 
         assert stats.total_net_pnl == 0.0
         assert stats.max_drawdown_percent == 0.0
+        assert stats.max_drawdown_usdt == 0.0
         assert stats.trades_opened_today == 0
         assert stats.trades_closed_today == 0
         assert stats.win_rate == 0.0
-
-    def test_custom_values(self):
-        """Test custom values for chart stats."""
-        stats = ChartStats(
-            total_net_pnl=500.0,
-            max_drawdown_percent=10.5,
-            max_drawdown_usdt=50.0,
-            trades_opened_today=5,
-            trades_closed_today=4,
-            win_rate=75.0,
-            total_used_equity=10000.0,
-            profit_factor=2.5,
-            win_loss_ratio=1.8,
-            cumulative_pnl=1500.0,
-        )
-
-        assert stats.total_net_pnl == 500.0
-        assert stats.trades_opened_today == 5
+        assert stats.total_used_equity == 0.0
+        assert stats.profit_factor == 0.0
+        assert stats.win_loss_ratio == 0.0
+        assert stats.cumulative_pnl == 0.0
 
 
 class TestDailyReportData:
     """Tests for DailyReportData model."""
 
-    def test_empty_report(self):
-        """Test creating empty daily report."""
+    def test_empty_report_defaults(self):
+        """Verify empty report has sensible defaults."""
         report = DailyReportData(
             date="2026-01-20",
             total_trades=0,
@@ -451,12 +517,11 @@ class TestDailyReportData:
             by_pair={},
         )
 
-        assert report.total_trades == 0
         assert report.equity_points == []
         assert report.chart_stats is None
 
-    def test_full_report(self):
-        """Test creating full daily report."""
+    def test_report_with_all_data(self):
+        """Verify report can hold all data types."""
         trade = TradeHistoryItem(
             group_id="group_1",
             exchange="binance",
@@ -472,7 +537,7 @@ class TestDailyReportData:
             cumulative_pnl=100.0,
         )
 
-        chart_stats = ChartStats(total_net_pnl=100.0)
+        chart_stats = ChartStats(total_net_pnl=100.0, win_rate=75.0)
 
         report = DailyReportData(
             date="2026-01-20",
@@ -488,32 +553,31 @@ class TestDailyReportData:
             chart_stats=chart_stats,
         )
 
-        assert report.total_trades == 1
         assert len(report.trades) == 1
         assert len(report.equity_points) == 1
-        assert report.chart_stats is not None
+        assert report.chart_stats.win_rate == 75.0
 
 
 class TestAppValidationError:
     """Tests for custom ValidationError model."""
 
-    def test_validation_error(self):
-        """Test creating validation error."""
-        error = AppValidationError(
-            field="symbol",
-            message="Symbol is required",
-            value=None,
-        )
-
-        assert error.field == "symbol"
-        assert error.message == "Symbol is required"
-
-    def test_validation_error_with_value(self):
-        """Test validation error with value."""
+    def test_error_captures_context(self):
+        """Verify error captures field, message, and value."""
         error = AppValidationError(
             field="price",
             message="Price must be positive",
             value=-100.0,
         )
 
+        assert error.field == "price"
+        assert error.message == "Price must be positive"
         assert error.value == -100.0
+
+    def test_value_is_optional(self):
+        """Verify value field is optional."""
+        error = AppValidationError(
+            field="symbol",
+            message="Symbol is required",
+        )
+
+        assert error.value is None

@@ -252,18 +252,15 @@ class TestGetDrawdownForPeriod:
     async def test_no_trades_drawdown(self, populated_db):
         """Test drawdown for period with no trades.
 
-        With account snapshot approach, equity reflects cumulative PnL
-        from all trades before the period, even when no trades in period.
+        Period reports start fresh from 0 - no previous cumulative PnL.
         """
         far_future = "2030-01-01"
         dd_data = await populated_db.get_drawdown_for_period(far_future, far_future)
 
         assert dd_data["trade_count"] == 0
-        # Account snapshot: cumulative PnL before period = 394.75 (all historical trades)
-        # Total capital for period = 0 (no trades)
-        # Starting equity = 394.75 + 0 = 394.75
-        assert abs(dd_data["current_equity"] - 394.75) < 0.01
-        assert abs(dd_data["peak"] - 394.75) < 0.01
+        # Period starts from 0: no trades = no capital = 0 equity
+        assert dd_data["current_equity"] == 0
+        assert dd_data["peak"] == 0
         assert dd_data["max_drawdown"] == 0.0
 
     @pytest.mark.asyncio
@@ -1364,7 +1361,7 @@ class TestFullTradeWorkflow:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (trade_id, "binance", "BTC", "USDT", "closed", "1h",
-                 pnl, pct, f"{today} 09:00:00", f"{today} 10:00:00")
+                 pnl, pct, f"{today}T09:00:00", f"{today}T10:00:00")
             )
         await test_db.connection.commit()
 
@@ -1402,7 +1399,7 @@ class TestFullTradeWorkflow:
         today = datetime.now().strftime("%Y-%m-%d")
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
 
-        # Create trades for different days
+        # Create trades for different days (using ISO format timestamps)
         await test_db.connection.execute(
             """
             INSERT INTO trades (id, exchange, base, quote, status, timeframe,
@@ -1410,7 +1407,7 @@ class TestFullTradeWorkflow:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             ("today_trade", "binance", "BTC", "USDT", "closed", "1h",
-             100.0, f"{today} 09:00:00", f"{today} 10:00:00")
+             100.0, f"{today}T09:00:00", f"{today}T10:00:00")
         )
         await test_db.connection.execute(
             """
@@ -1419,7 +1416,7 @@ class TestFullTradeWorkflow:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             ("yesterday_trade", "binance", "ETH", "USDT", "closed", "1h",
-             50.0, f"{yesterday} 09:00:00", f"{yesterday} 10:00:00")
+             50.0, f"{yesterday}T09:00:00", f"{yesterday}T10:00:00")
         )
         await test_db.connection.commit()
 
@@ -1468,7 +1465,7 @@ class TestFullTradeWorkflow:
         """Test that NULL PnL values are handled correctly in statistics."""
         today = datetime.now().strftime("%Y-%m-%d")
 
-        # Create trades - some with NULL PnL (open trades)
+        # Create trades - some with NULL PnL (open trades) using ISO format
         await test_db.connection.execute(
             """
             INSERT INTO trades (id, exchange, base, quote, status, timeframe,
@@ -1476,7 +1473,7 @@ class TestFullTradeWorkflow:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             ("null_pnl_1", "binance", "BTC", "USDT", "closed", "1h",
-             100.0, f"{today} 09:00:00", f"{today} 10:00:00")
+             100.0, f"{today}T09:00:00", f"{today}T10:00:00")
         )
         await test_db.connection.execute(
             """
@@ -1485,7 +1482,7 @@ class TestFullTradeWorkflow:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             ("null_pnl_2", "binance", "ETH", "USDT", "open", "1h",
-             None, f"{today} 11:00:00", None)  # Open trade with NULL PnL
+             None, f"{today}T11:00:00", None)  # Open trade with NULL PnL
         )
         await test_db.connection.commit()
 
@@ -1574,7 +1571,7 @@ class TestDataIntegrity:
         """Test exchange breakdown statistics accuracy."""
         today = datetime.now().strftime("%Y-%m-%d")
 
-        # Create trades on different exchanges
+        # Create trades on different exchanges (using ISO format timestamps)
         exchanges = [
             ("binance", 100.0),
             ("binance", -30.0),
@@ -1590,7 +1587,7 @@ class TestDataIntegrity:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (f"ex_stat_{i}", exchange, "BTC", "USDT", "closed", "1h",
-                 pnl, f"{today} {9+i}:00:00", f"{today} {10+i}:00:00")
+                 pnl, f"{today}T{9+i:02d}:00:00", f"{today}T{10+i:02d}:00:00")
             )
         await test_db.connection.commit()
 
@@ -1608,3 +1605,299 @@ class TestDataIntegrity:
         assert "bybit" in stats
         assert abs(stats["bybit"]["pnl"] - 125.0) < 0.01
         assert stats["bybit"]["trades"] == 2
+
+
+class TestGetTradesForDate:
+    """Tests for get_trades_for_date method."""
+
+    @pytest.mark.asyncio
+    async def test_get_trades_for_date(self, test_db):
+        """
+        Verify get_trades_for_date returns only closed trades for specific date.
+
+        Bug prevented: API returns open trades or wrong date's trades.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Create one closed trade for today
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("date_test_1", "binance", "BTC", "USDT", "closed", "1h",
+             50.0, f"{today}T09:00:00", f"{today}T10:00:00")
+        )
+
+        # Create one open trade for today (should NOT be returned)
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("date_test_2", "binance", "ETH", "USDT", "open", "1h", f"{today}T09:00:00")
+        )
+        await test_db.connection.commit()
+
+        trades = await test_db.get_trades_for_date(today)
+
+        assert len(trades) == 1
+        assert trades[0]["id"] == "date_test_1"
+        assert trades[0]["status"] == "closed"
+
+
+class TestGetEquityCurveDataForPeriod:
+    """Tests for get_equity_curve_data_for_period method."""
+
+    @pytest.mark.asyncio
+    async def test_equity_curve_with_date_range(self, test_db):
+        """
+        Verify equity curve data returns trades within date range.
+
+        Bug prevented: Report shows wrong period's equity curve.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Create trades with different close times
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("eq_curve_1", "binance", "BTC", "USDT", "closed", "1h",
+             100.0, f"{today}T09:00:00", f"{today}T10:00:00")
+        )
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("eq_curve_2", "binance", "ETH", "USDT", "closed", "1h",
+             -25.0, f"{today}T11:00:00", f"{today}T12:00:00")
+        )
+        await test_db.connection.commit()
+
+        # Test with specific date range
+        curve = await test_db.get_equity_curve_data_for_period(today, today)
+
+        assert len(curve) == 2
+        assert curve[0]["total_pnl_usdt"] == 100.0
+        assert curve[1]["total_pnl_usdt"] == -25.0
+
+    @pytest.mark.asyncio
+    async def test_equity_curve_all_time(self, test_db):
+        """
+        Verify equity curve returns all trades when no date range specified.
+
+        Bug prevented: All-time view missing historical data.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("eq_all_1", "binance", "BTC", "USDT", "closed", "1h",
+             50.0, f"{today}T09:00:00", f"{today}T10:00:00")
+        )
+        await test_db.connection.commit()
+
+        # None, None = all time
+        curve = await test_db.get_equity_curve_data_for_period(None, None)
+
+        assert len(curve) >= 1
+        # Should be ordered by closed_at ASC
+        assert any(c["total_pnl_usdt"] == 50.0 for c in curve)
+
+
+class TestGetTradeCountsForPeriod:
+    """Tests for get_trade_counts_for_period method."""
+
+    @pytest.mark.asyncio
+    async def test_trade_counts_with_date_range(self, test_db):
+        """
+        Verify trade counts distinguish opened vs closed within period.
+
+        Bug prevented: Report shows wrong open/closed counts.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # 2 trades opened today, 1 closed today
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("count_1", "binance", "BTC", "USDT", "closed", "1h",
+             100.0, f"{today}T09:00:00", f"{today}T10:00:00")
+        )
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("count_2", "binance", "ETH", "USDT", "open", "1h", f"{today}T11:00:00")
+        )
+        await test_db.connection.commit()
+
+        counts = await test_db.get_trade_counts_for_period(today, today)
+
+        assert counts["opened_in_period"] == 2
+        assert counts["closed_in_period"] == 1
+
+    @pytest.mark.asyncio
+    async def test_trade_counts_all_time(self, test_db):
+        """
+        Verify trade counts work for all-time period.
+
+        Bug prevented: All-time statistics query fails.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe,
+                               total_pnl_usdt, created_at, closed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("count_all_1", "binance", "BTC", "USDT", "closed", "1h",
+             50.0, f"{today}T09:00:00", f"{today}T10:00:00")
+        )
+        await test_db.connection.commit()
+
+        # None, None = all time
+        counts = await test_db.get_trade_counts_for_period(None, None)
+
+        assert counts["opened_in_period"] >= 1
+        assert counts["closed_in_period"] >= 1
+
+
+class TestCleanupOrphanTrades:
+    """Tests for cleanup_orphan_trades method."""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_orphan_trades(self, test_db):
+        """
+        Verify orphan trades (open with 0 pyramids) are deleted.
+
+        Bug prevented: Orphan trades accumulate causing data inconsistency.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Create orphan trade (open, no pyramids)
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("orphan_1", "binance", "BTC", "USDT", "open", "1h", f"{today}T09:00:00")
+        )
+
+        # Create valid trade with pyramid (using correct column names)
+        await test_db.connection.execute(
+            """
+            INSERT INTO trades (id, exchange, base, quote, status, timeframe, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("valid_1", "binance", "ETH", "USDT", "open", "1h", f"{today}T09:00:00")
+        )
+        await test_db.connection.execute(
+            """
+            INSERT INTO pyramids (id, trade_id, pyramid_index, entry_price, position_size,
+                                 capital_usdt, entry_time, fee_rate, fee_usdt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("pyr_1", "valid_1", 0, 3000.0, 0.1, 300.0, f"{today}T09:00:00", 0.001, 0.3)
+        )
+        await test_db.connection.commit()
+
+        deleted_count = await test_db.cleanup_orphan_trades()
+
+        assert deleted_count == 1
+
+        # Verify orphan is gone
+        cursor = await test_db.connection.execute(
+            "SELECT id FROM trades WHERE id = 'orphan_1'"
+        )
+        assert await cursor.fetchone() is None
+
+        # Verify valid trade still exists
+        cursor = await test_db.connection.execute(
+            "SELECT id FROM trades WHERE id = 'valid_1'"
+        )
+        assert await cursor.fetchone() is not None
+
+    @pytest.mark.asyncio
+    async def test_cleanup_orphan_trades_none_found(self, test_db):
+        """
+        Verify cleanup_orphan_trades returns 0 when no orphans exist.
+
+        Bug prevented: Function errors when nothing to delete.
+        """
+        deleted_count = await test_db.cleanup_orphan_trades()
+
+        assert deleted_count == 0
+
+
+class TestPyramidCapitalJsonErrors:
+    """Tests for JSON error handling in pyramid capital methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_all_pyramid_capitals_with_corrupted_json(self, test_db):
+        """
+        Verify corrupted JSON in pyramid_capitals returns empty dict.
+
+        Bug prevented: App crashes on corrupted settings data.
+        """
+        # Insert corrupted JSON directly
+        await test_db.connection.execute(
+            """
+            INSERT INTO settings (key, value)
+            VALUES ('pyramid_capitals', 'not valid json {{{')
+            """
+        )
+        await test_db.connection.commit()
+
+        result = await test_db.get_all_pyramid_capitals()
+
+        # Should return empty dict, not crash
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_set_pyramid_capital_with_corrupted_existing(self, test_db):
+        """
+        Verify set_pyramid_capital handles corrupted existing JSON.
+
+        Bug prevented: Setting new capital fails if existing data corrupted.
+        """
+        # Insert corrupted JSON first
+        await test_db.connection.execute(
+            """
+            INSERT INTO settings (key, value)
+            VALUES ('pyramid_capitals', 'corrupted data')
+            """
+        )
+        await test_db.connection.commit()
+
+        # Should not crash, should create new valid structure
+        key = await test_db.set_pyramid_capital(
+            pyramid_index=0,
+            capital=1000.0,
+            exchange="binance",
+            base="BTC",
+            quote="USDT",
+            timeframe="1h"
+        )
+
+        assert key is not None
+
+        # Verify it was saved correctly
+        capitals = await test_db.get_all_pyramid_capitals()
+        assert key in capitals
+        assert capitals[key] == 1000.0

@@ -158,6 +158,61 @@ class TestProcessEntry:
         assert data is None
 
     @pytest.mark.asyncio
+    async def test_entry_with_symbol_info_failure_uses_default_precision(self):
+        """
+        Verify trade creation succeeds with default precision when exchange API fails.
+
+        Real-world scenario: Exchange API is down or rate-limited during trade entry.
+        Expected behavior: Fall back to precision=4 and continue processing.
+        Bug prevented: Trade entry fails completely when exchange API is temporarily unavailable.
+        """
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert()
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config, \
+             patch("app.services.trade_service.settings") as mock_settings:
+
+            # Price fetch works
+            mock_price = MagicMock()
+            mock_price.price = 50000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            # Symbol info FAILS - this is the scenario we're testing
+            mock_exchange.get_symbol_info = AsyncMock(
+                side_effect=Exception("Exchange API unavailable")
+            )
+            # round_quantity should be called with default precision (4)
+            mock_exchange.round_quantity = MagicMock(return_value=0.02)
+
+            # Mock database
+            mock_db.get_open_trade_by_group = AsyncMock(return_value=None)
+            mock_db.get_next_group_sequence = AsyncMock(return_value=1)
+            mock_db.create_trade_with_group = AsyncMock()
+            mock_db.get_pyramid_capital = AsyncMock(return_value=1000.0)
+            mock_db.add_pyramid = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+            mock_settings.validation_mode = "lenient"
+
+            result, data = await TradeService._process_entry(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        # Should succeed despite symbol info failure
+        assert result.success is True
+        assert data is not None
+        # Verify round_quantity was called with default precision 4
+        mock_exchange.round_quantity.assert_called()
+        call_args = mock_exchange.round_quantity.call_args
+        assert call_args[0][1] == 4  # Second arg is precision
+
+    @pytest.mark.asyncio
     async def test_new_trade_creation(self):
         """Test creating a new trade with first pyramid."""
         from app.services.trade_service import TradeService
@@ -1140,3 +1195,225 @@ class TestBoundaryConditions:
         assert result.success is True
         # With no fees, net should equal gross
         assert abs(data.gross_pnl - data.net_pnl) < 0.01
+
+
+class TestAmbiguousSignalHandling:
+    """Tests for ambiguous signal handling (neither clear entry nor exit)."""
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_signal_ignored(self):
+        """
+        Verify ambiguous signals are ignored gracefully.
+
+        Bug prevented: Non-entry/exit signals crash the system.
+        """
+        from app.services.trade_service import TradeService
+
+        # Create an ambiguous signal: buy with flat position (unusual combo)
+        alert = create_test_alert(action="buy", position_side="flat")
+
+        with patch("app.services.trade_service.normalize_exchange", return_value="binance"), \
+             patch("app.services.trade_service.parse_symbol") as mock_parse, \
+             patch("app.services.trade_service.db") as mock_db:
+
+            from app.services.symbol_normalizer import ParsedSymbol
+            mock_parse.return_value = ParsedSymbol(base="BTC", quote="USDT")
+            mock_db.mark_alert_processed = AsyncMock()
+
+            result, data = await TradeService.process_signal(alert)
+
+        assert result.success is True  # Should succeed (ignored, not failed)
+        assert "ignored" in result.message.lower()
+        assert data is None
+
+    @pytest.mark.asyncio
+    async def test_sell_with_long_position_ignored(self):
+        """
+        Verify sell with long position_side is ignored (not a clear exit).
+
+        Bug prevented: Partial closes interpreted incorrectly.
+        """
+        from app.services.trade_service import TradeService
+
+        # sell + long is ambiguous (could be partial close, not full exit)
+        alert = create_test_alert(action="sell", position_side="long")
+
+        with patch("app.services.trade_service.normalize_exchange", return_value="binance"), \
+             patch("app.services.trade_service.parse_symbol") as mock_parse, \
+             patch("app.services.trade_service.db") as mock_db:
+
+            from app.services.symbol_normalizer import ParsedSymbol
+            mock_parse.return_value = ParsedSymbol(base="BTC", quote="USDT")
+            mock_db.mark_alert_processed = AsyncMock()
+
+            result, data = await TradeService.process_signal(alert)
+
+        assert result.success is True
+        assert "ignored" in result.message.lower()
+
+
+class TestRaceConditionHandling:
+    """Tests for race condition handling during trade creation and exit."""
+
+    @pytest.mark.asyncio
+    async def test_entry_race_condition_recovery(self):
+        """
+        Verify recovery when trade is created by another request first.
+
+        Bug prevented: Duplicate trade creation fails with IntegrityError.
+        """
+        import sqlite3
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert()
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config, \
+             patch("app.services.trade_service.settings") as mock_settings:
+
+            # Mock price fetch
+            mock_price = MagicMock()
+            mock_price.price = 50000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            # Mock symbol info
+            mock_symbol_info = MagicMock()
+            mock_symbol_info.qty_precision = 4
+            mock_exchange.get_symbol_info = AsyncMock(return_value=mock_symbol_info)
+            mock_exchange.round_quantity = MagicMock(return_value=0.02)
+
+            # First call: no trade exists
+            # create_trade_with_group raises IntegrityError (race condition)
+            # Second call: trade now exists
+            mock_db.get_open_trade_by_group = AsyncMock(
+                side_effect=[
+                    None,  # First check: no trade
+                    {"id": "race_trade", "group_id": "BTC_Binance_1h_001"}  # After race
+                ]
+            )
+            mock_db.get_next_group_sequence = AsyncMock(return_value=1)
+            mock_db.create_trade_with_group = AsyncMock(
+                side_effect=sqlite3.IntegrityError("UNIQUE constraint failed")
+            )
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {"id": "pyr_existing", "pyramid_index": 0}
+            ])
+            mock_db.get_pyramid_capital = AsyncMock(return_value=1000.0)
+            mock_db.add_pyramid = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+
+            # Mock config
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+            mock_settings.validation_mode = "lenient"
+
+            result, data = await TradeService._process_entry(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        # Should succeed by adding pyramid to existing trade
+        assert result.success is True
+        assert result.trade_id == "race_trade"
+        assert data.pyramid_index == 1  # Added as second pyramid
+
+    @pytest.mark.asyncio
+    async def test_entry_race_condition_trade_closed(self):
+        """
+        Verify error when trade is created and closed by another request.
+
+        Bug prevented: Silent failure when race condition causes data loss.
+        """
+        import sqlite3
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert()
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config, \
+             patch("app.services.trade_service.settings") as mock_settings:
+
+            mock_price = MagicMock()
+            mock_price.price = 50000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_symbol_info = MagicMock()
+            mock_symbol_info.qty_precision = 4
+            mock_exchange.get_symbol_info = AsyncMock(return_value=mock_symbol_info)
+            mock_exchange.round_quantity = MagicMock(return_value=0.02)
+
+            # Race condition: trade created and closed before we can add pyramid
+            mock_db.get_open_trade_by_group = AsyncMock(
+                side_effect=[None, None]  # No trade even after race
+            )
+            mock_db.get_next_group_sequence = AsyncMock(return_value=1)
+            mock_db.create_trade_with_group = AsyncMock(
+                side_effect=sqlite3.IntegrityError("UNIQUE constraint failed")
+            )
+            mock_db.get_pyramid_capital = AsyncMock(return_value=1000.0)
+
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+            mock_settings.validation_mode = "lenient"
+
+            result, data = await TradeService._process_entry(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        assert result.success is False
+        assert result.error == "RACE_CONDITION"
+        assert "race condition" in result.message.lower()
+
+    @pytest.mark.asyncio
+    async def test_exit_race_condition_already_closed(self):
+        """
+        Verify handling when exit is attempted but trade already closed.
+
+        Bug prevented: Duplicate exit signals cause errors.
+        """
+        from app.services.trade_service import TradeService
+        from app.services.symbol_normalizer import ParsedSymbol
+
+        alert = create_test_alert(action="sell", position_side="flat")
+        parsed = ParsedSymbol(base="BTC", quote="USDT")
+
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
+
+            mock_price = MagicMock()
+            mock_price.price = 52000.0
+            mock_exchange.get_price = AsyncMock(return_value=mock_price)
+
+            mock_db.get_open_trade_by_group = AsyncMock(return_value={
+                "id": "trade_123",
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
+            })
+            mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,
+                    "entry_time": "2026-01-20T10:00:00"
+                }
+            ])
+            mock_db.update_pyramid_pnl = AsyncMock()
+            # add_exit returns False = exit already exists (race condition)
+            mock_db.add_exit = AsyncMock(return_value=False)
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+
+            result, data = await TradeService._process_exit(
+                alert, "binance", parsed, datetime.now(UTC)
+            )
+
+        # Should succeed gracefully, acknowledging duplicate
+        assert result.success is True
+        assert "already closed" in result.message.lower()
+        assert data is None
