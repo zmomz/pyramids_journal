@@ -25,56 +25,39 @@ from .services.symbol_normalizer import parse_symbol
 from .bot.bot import telegram_bot
 
 
-class SensitiveDataFilter(logging.Filter):
-    """Filter that redacts sensitive data from log messages."""
+import re
 
-    # Patterns to redact (regex pattern, replacement)
-    PATTERNS = [
-        # Telegram bot tokens: 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ (any length)
-        (r'bot\d+:[A-Za-z0-9_-]+', 'bot***:***REDACTED***'),
-        # Generic API keys/tokens (long alphanumeric strings after common keywords)
-        (r'(token[=:]\s*)[A-Za-z0-9_-]{20,}', r'\1***REDACTED***'),
-        (r'(api[_-]?key[=:]\s*)[A-Za-z0-9_-]{20,}', r'\1***REDACTED***'),
-        (r'(secret[=:]\s*)[A-Za-z0-9_-]{20,}', r'\1***REDACTED***'),
-    ]
+# Patterns to redact sensitive data (compiled for efficiency)
+REDACT_PATTERNS = [
+    # Telegram bot tokens in URLs: /bot123456:ABCdef.../
+    (re.compile(r'bot\d+:[A-Za-z0-9_-]+', re.IGNORECASE), 'bot***:***REDACTED***'),
+    # Generic tokens/keys
+    (re.compile(r'(token[=:]\s*)[A-Za-z0-9_-]{20,}', re.IGNORECASE), r'\1***REDACTED***'),
+    (re.compile(r'(api[_-]?key[=:]\s*)[A-Za-z0-9_-]{20,}', re.IGNORECASE), r'\1***REDACTED***'),
+    (re.compile(r'(secret[=:]\s*)[A-Za-z0-9_-]{20,}', re.IGNORECASE), r'\1***REDACTED***'),
+]
 
-    def __init__(self):
-        super().__init__()
-        import re
-        self._compiled = [(re.compile(p, re.IGNORECASE), r) for p, r in self.PATTERNS]
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        """Redact sensitive data from log message and args."""
-        # Filter the main message
-        if record.msg:
-            msg = str(record.msg)
-            for pattern, replacement in self._compiled:
-                msg = pattern.sub(replacement, msg)
-            record.msg = msg
+class SensitiveDataFormatter(logging.Formatter):
+    """Formatter that redacts sensitive data AFTER formatting the message."""
 
-        # Filter args (httpx passes URLs as args)
-        if record.args:
-            filtered_args = []
-            for arg in record.args:
-                if isinstance(arg, str):
-                    for pattern, replacement in self._compiled:
-                        arg = pattern.sub(replacement, arg)
-                filtered_args.append(arg)
-            record.args = tuple(filtered_args)
-        return True
+    def format(self, record: logging.LogRecord) -> str:
+        """Format the record and then redact sensitive data."""
+        # First, do the normal formatting (combines msg + args)
+        formatted = super().format(record)
+        # Then redact sensitive patterns from the final string
+        for pattern, replacement in REDACT_PATTERNS:
+            formatted = pattern.sub(replacement, formatted)
+        return formatted
 
 
 def setup_logging() -> None:
     """Configure logging with console and persistent file handlers."""
     log_level = getattr(logging, settings.log_level.upper())
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    formatter = logging.Formatter(log_format)
 
-    # Suppress httpx INFO logs (contain bot tokens in URLs)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-
-    # Create filter to redact sensitive data
-    sensitive_filter = SensitiveDataFilter()
+    # Use custom formatter that redacts sensitive data after formatting
+    formatter = SensitiveDataFormatter(log_format)
 
     # Root logger
     root_logger = logging.getLogger()
@@ -84,7 +67,6 @@ def setup_logging() -> None:
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
-    console_handler.addFilter(sensitive_filter)
     root_logger.addHandler(console_handler)
 
     # File handler - persisted in same volume as database
@@ -98,7 +80,6 @@ def setup_logging() -> None:
     )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
-    file_handler.addFilter(sensitive_filter)
     root_logger.addHandler(file_handler)
 
 
