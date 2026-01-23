@@ -36,7 +36,7 @@ def mock_dependencies():
         mock_bot.stop = AsyncMock()
 
         # Report service
-        mock_report.start_scheduler = MagicMock()
+        mock_report.start_scheduler = AsyncMock()
         mock_report.stop_scheduler = MagicMock()
         mock_report.generate_daily_report = AsyncMock()
         mock_report.generate_and_send_daily_report = AsyncMock(return_value=True)
@@ -166,7 +166,7 @@ class TestWebhookAuthentication:
             mock_bot.initialize = AsyncMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
-            mock_report.start_scheduler = MagicMock()
+            mock_report.start_scheduler = AsyncMock()
             mock_report.stop_scheduler = MagicMock()
             mock_settings.webhook_secret = "correct_secret"
 
@@ -301,7 +301,7 @@ class TestWebhookPausedIgnored:
             mock_bot.initialize = AsyncMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
-            mock_report.start_scheduler = MagicMock()
+            mock_report.start_scheduler = AsyncMock()
             mock_report.stop_scheduler = MagicMock()
 
             from app.main import app
@@ -330,7 +330,7 @@ class TestWebhookPausedIgnored:
             mock_bot.initialize = AsyncMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
-            mock_report.start_scheduler = MagicMock()
+            mock_report.start_scheduler = AsyncMock()
             mock_report.stop_scheduler = MagicMock()
 
             from app.main import app
@@ -387,7 +387,7 @@ class TestWebhookSignalProcessing:
             mock_bot.initialize = AsyncMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
-            mock_report.start_scheduler = MagicMock()
+            mock_report.start_scheduler = AsyncMock()
             mock_report.stop_scheduler = MagicMock()
 
             mock_trade.process_signal = AsyncMock(return_value=(
@@ -452,7 +452,7 @@ class TestWebhookSignalProcessing:
             mock_bot.initialize = AsyncMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
-            mock_report.start_scheduler = MagicMock()
+            mock_report.start_scheduler = AsyncMock()
             mock_report.stop_scheduler = MagicMock()
 
             mock_trade.process_signal = AsyncMock(return_value=(
@@ -494,7 +494,7 @@ class TestWebhookSignalProcessing:
             mock_bot.initialize = AsyncMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
-            mock_report.start_scheduler = MagicMock()
+            mock_report.start_scheduler = AsyncMock()
             mock_report.stop_scheduler = MagicMock()
 
             mock_trade.process_signal = AsyncMock(return_value=(
@@ -552,7 +552,7 @@ class TestWebhookSignalProcessing:
             mock_bot.initialize = AsyncMock()
             mock_bot.start = AsyncMock()
             mock_bot.stop = AsyncMock()
-            mock_report.start_scheduler = MagicMock()
+            mock_report.start_scheduler = AsyncMock()
             mock_report.stop_scheduler = MagicMock()
 
             mock_trade.process_signal = AsyncMock(return_value=(

@@ -96,7 +96,7 @@ async def lifespan(app: FastAPI):
     logger.info("Database connected")
 
     # Start report scheduler
-    report_service.start_scheduler()
+    await report_service.start_scheduler()
 
     # Start Telegram bot
     await telegram_bot.initialize()

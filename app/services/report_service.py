@@ -34,22 +34,43 @@ class ReportService:
             self._scheduler = AsyncIOScheduler()
         return self._scheduler
 
-    def start_scheduler(self) -> None:
+    async def start_scheduler(self) -> None:
         """Start the report scheduler."""
         if self._scheduler and self._scheduler.running:
             return
 
+        # Read settings from database first, fall back to config defaults
+        report_time = settings.daily_report_time
+        tz_str = settings.timezone
+
+        try:
+            cursor = await db.connection.execute(
+                "SELECT value FROM settings WHERE key = 'daily_report_time'"
+            )
+            row = await cursor.fetchone()
+            if row:
+                report_time = row["value"]
+
+            cursor = await db.connection.execute(
+                "SELECT value FROM settings WHERE key = 'timezone'"
+            )
+            row = await cursor.fetchone()
+            if row:
+                tz_str = row["value"]
+        except Exception as e:
+            logger.warning(f"Failed to read settings from database: {e}, using defaults")
+
         # Parse report time
         try:
-            hour, minute = map(int, settings.daily_report_time.split(":"))
+            hour, minute = map(int, report_time.split(":"))
         except ValueError:
             hour, minute = 12, 0
             logger.warning(
-                f"Invalid daily_report_time '{settings.daily_report_time}', using 12:00"
+                f"Invalid daily_report_time '{report_time}', using 12:00"
             )
 
         # Create cron trigger with configured timezone
-        tz = pytz.timezone(settings.timezone)
+        tz = pytz.timezone(tz_str)
         trigger = CronTrigger(hour=hour, minute=minute, timezone=tz)
 
         # Schedule daily report
@@ -62,7 +83,7 @@ class ReportService:
 
         self.scheduler.start()
         logger.info(
-            f"Report scheduler started. Daily report at {hour:02d}:{minute:02d} {settings.timezone}"
+            f"Report scheduler started. Daily report at {hour:02d}:{minute:02d} {tz_str}"
         )
 
     def stop_scheduler(self) -> None:
@@ -114,16 +135,16 @@ class ReportService:
         (/pnl, /stats, /best, etc.) to ensure consistent results.
 
         Args:
-            date: Date string (YYYY-MM-DD). Defaults to yesterday.
+            date: Date string (YYYY-MM-DD). Defaults to today.
 
         Returns:
             DailyReportData with report statistics
         """
         if date is None:
-            # Get yesterday's date in configured timezone
+            # Get today's date in configured timezone
             tz = pytz.timezone(settings.timezone)
-            yesterday = datetime.now(tz) - timedelta(days=1)
-            date = yesterday.strftime("%Y-%m-%d")
+            today = datetime.now(tz)
+            date = today.strftime("%Y-%m-%d")
 
         logger.info(f"Generating daily report for {date}")
 
@@ -305,7 +326,7 @@ class ReportService:
         Generate daily report and send to Telegram.
 
         Args:
-            date: Date string (YYYY-MM-DD). Defaults to yesterday.
+            date: Date string (YYYY-MM-DD). Defaults to today.
 
         Returns:
             True if report was sent successfully
@@ -329,7 +350,7 @@ class ReportService:
 
                 await error_notifier.notify_error(
                     error_type="Daily Report Failed",
-                    message=f"Failed to generate or send daily report for {date or 'yesterday'}",
+                    message=f"Failed to generate or send daily report for {date or 'today'}",
                     details=str(e),
                 )
             except Exception:

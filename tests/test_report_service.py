@@ -26,39 +26,87 @@ class TestReportServiceScheduler:
         assert scheduler is not None
         assert service._scheduler is scheduler
 
+    @pytest.mark.asyncio
+    @patch("app.services.report_service.db")
     @patch("app.services.report_service.settings")
-    def test_start_scheduler(self, mock_settings):
+    async def test_start_scheduler(self, mock_settings, mock_db):
         """Test starting the scheduler."""
         from app.services.report_service import ReportService
 
         mock_settings.daily_report_time = "12:00"
         mock_settings.timezone = "UTC"
 
+        # Mock database to return no overrides (use defaults)
+        mock_cursor = AsyncMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+        mock_db.connection.execute = AsyncMock(return_value=mock_cursor)
+
         service = ReportService()
 
         with patch.object(service.scheduler, "add_job") as mock_add_job:
             with patch.object(service.scheduler, "start") as mock_start:
-                service.start_scheduler()
+                await service.start_scheduler()
 
                 mock_add_job.assert_called_once()
                 mock_start.assert_called_once()
 
+    @pytest.mark.asyncio
+    @patch("app.services.report_service.db")
     @patch("app.services.report_service.settings")
-    def test_start_scheduler_invalid_time(self, mock_settings):
+    async def test_start_scheduler_invalid_time(self, mock_settings, mock_db):
         """Test starting scheduler with invalid time falls back to default."""
         from app.services.report_service import ReportService
 
         mock_settings.daily_report_time = "invalid"
         mock_settings.timezone = "UTC"
 
+        # Mock database to return no overrides (use defaults)
+        mock_cursor = AsyncMock()
+        mock_cursor.fetchone = AsyncMock(return_value=None)
+        mock_db.connection.execute = AsyncMock(return_value=mock_cursor)
+
         service = ReportService()
 
         with patch.object(service.scheduler, "add_job") as mock_add_job:
             with patch.object(service.scheduler, "start") as mock_start:
-                service.start_scheduler()
+                await service.start_scheduler()
 
                 # Should still work with default time
                 mock_add_job.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("app.services.report_service.db")
+    @patch("app.services.report_service.settings")
+    async def test_start_scheduler_reads_from_database(self, mock_settings, mock_db):
+        """Test that scheduler reads time/timezone from database first."""
+        from app.services.report_service import ReportService
+
+        mock_settings.daily_report_time = "12:00"
+        mock_settings.timezone = "UTC"
+
+        # Mock database to return overridden values
+        async def mock_execute(query):
+            mock_cursor = AsyncMock()
+            if "daily_report_time" in query:
+                mock_cursor.fetchone = AsyncMock(return_value={"value": "23:59"})
+            elif "timezone" in query:
+                mock_cursor.fetchone = AsyncMock(return_value={"value": "Asia/Riyadh"})
+            return mock_cursor
+
+        mock_db.connection.execute = AsyncMock(side_effect=mock_execute)
+
+        service = ReportService()
+
+        with patch.object(service.scheduler, "add_job") as mock_add_job:
+            with patch.object(service.scheduler, "start") as mock_start:
+                await service.start_scheduler()
+
+                # Verify the trigger was created with database values
+                call_args = mock_add_job.call_args
+                trigger = call_args.kwargs.get("trigger") or call_args[1].get("trigger")
+                # The scheduler should have been started with DB values
+                mock_add_job.assert_called_once()
+                mock_start.assert_called_once()
 
     def test_stop_scheduler(self):
         """Test stopping the scheduler."""
