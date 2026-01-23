@@ -1,4 +1,4 @@
-# Incident Report: Signal Processing Failures
+# Incident Report: Signal Processing Failures & Rate Limiting
 
 **Date:** January 17-23, 2026
 **Status:** RESOLVED
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-Multiple trading signals failed to process due to two technical issues in the system. A total of **209 datetime comparison errors** and **2 database constraint violations** were identified and resolved.
+Multiple trading signals failed to process due to two technical issues in the system. A total of **209 datetime comparison errors** and **2 database constraint violations** were identified and resolved. Additionally, a **Telegram rate limiting issue** was discovered and fixed.
 
 ---
 
@@ -38,6 +38,22 @@ sqlite3.IntegrityError: UNIQUE constraint failed: exits.trade_id
 
 **Root Cause:**
 Race condition in the `add_exit` method. When duplicate exit signals arrived within milliseconds, both passed the `has_exit()` check before either completed the INSERT operation, causing the second INSERT to fail.
+
+### 3. Telegram Rate Limiting Error (Flood Control)
+
+**Error Message:**
+```
+telegram.error.RetryAfter: Flood control exceeded. Retry in 24 seconds
+```
+
+**Root Cause:**
+When users rapidly clicked through menu buttons, the bot sent too many requests to Telegram's API, triggering 429 (Too Many Requests) responses. The error handler at `menu.py:518` attempted to send an error message to the user, but this also failed due to the rate limit, causing a cascading unhandled exception.
+
+**Impact:**
+
+- Menu interactions became unresponsive during rate limiting
+- Error handler exceptions were logged with full stack traces
+- Bot recovered automatically after the rate limit period expired
 
 ---
 
@@ -109,6 +125,28 @@ DELETE FROM symbol_rules;
 
 Added `SensitiveDataFilter` to redact API tokens from all log output (including httpx HTTP request logs).
 
+### Fix 5: Telegram Rate Limit Handling
+
+**File:** `app/bot/menu.py`
+
+Added specific handling for `telegram.error.RetryAfter` exceptions:
+
+```python
+from telegram.error import RetryAfter
+
+# In menu_callback_handler:
+except RetryAfter as e:
+    logger.warning(f"Rate limited by Telegram, retry after {e.retry_after}s")
+except Exception as e:
+    logger.error(f"Error in menu callback: {e}")
+    try:
+        await query.message.reply_text(f"❌ Error: {e}")
+    except RetryAfter:
+        pass  # Don't try to send error when rate limited
+```
+
+This prevents cascading errors when the bot is rate-limited by Telegram.
+
 ---
 
 ## Timeline
@@ -121,6 +159,8 @@ Added `SensitiveDataFilter` to redact API tokens from all log output (including 
 | 2026-01-22 | Symbol rules cache cleared |
 | 2026-01-23 | System operating normally, no new errors |
 | 2026-01-23 | Logging improvements deployed |
+| 2026-01-23 08:33 | Telegram rate limit errors occurred during rapid menu navigation |
+| 2026-01-23 | Rate limit handling fix deployed |
 
 ---
 

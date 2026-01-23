@@ -6,6 +6,7 @@ Provides inline keyboard menus for better navigation and UX.
 
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.error import RetryAfter
 from telegram.ext import CallbackQueryHandler, ContextTypes
 
 logger = logging.getLogger(__name__)
@@ -513,9 +514,14 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             context.args = []
             await _execute_command_from_callback(query, context, handlers.cmd_help)
 
+    except RetryAfter as e:
+        logger.warning(f"Rate limited by Telegram, retry after {e.retry_after}s")
     except Exception as e:
         logger.error(f"Error in menu callback: {e}")
-        await query.message.reply_text(f"❌ Error: {e}")
+        try:
+            await query.message.reply_text(f"❌ Error: {e}")
+        except RetryAfter:
+            pass
 
 
 # ============== Menu Command ==============
