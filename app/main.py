@@ -25,11 +25,42 @@ from .services.symbol_normalizer import parse_symbol
 from .bot.bot import telegram_bot
 
 
+class SensitiveDataFilter(logging.Filter):
+    """Filter that redacts sensitive data from log messages."""
+
+    # Patterns to redact (regex pattern, replacement)
+    PATTERNS = [
+        # Telegram bot tokens: 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
+        (r'bot\d+:[A-Za-z0-9_-]{35}', 'bot***:***REDACTED***'),
+        # Generic API keys/tokens (long alphanumeric strings after common keywords)
+        (r'(token[=:]\s*)[A-Za-z0-9_-]{20,}', r'\1***REDACTED***'),
+        (r'(api[_-]?key[=:]\s*)[A-Za-z0-9_-]{20,}', r'\1***REDACTED***'),
+        (r'(secret[=:]\s*)[A-Za-z0-9_-]{20,}', r'\1***REDACTED***'),
+    ]
+
+    def __init__(self):
+        super().__init__()
+        import re
+        self._compiled = [(re.compile(p, re.IGNORECASE), r) for p, r in self.PATTERNS]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Redact sensitive data from log message."""
+        if record.msg:
+            msg = str(record.msg)
+            for pattern, replacement in self._compiled:
+                msg = pattern.sub(replacement, msg)
+            record.msg = msg
+        return True
+
+
 def setup_logging() -> None:
     """Configure logging with console and persistent file handlers."""
     log_level = getattr(logging, settings.log_level.upper())
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     formatter = logging.Formatter(log_format)
+
+    # Create filter to redact sensitive data
+    sensitive_filter = SensitiveDataFilter()
 
     # Root logger
     root_logger = logging.getLogger()
@@ -39,6 +70,7 @@ def setup_logging() -> None:
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(sensitive_filter)
     root_logger.addHandler(console_handler)
 
     # File handler - persisted in same volume as database
@@ -52,6 +84,7 @@ def setup_logging() -> None:
     )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(sensitive_filter)
     root_logger.addHandler(file_handler)
 
 
