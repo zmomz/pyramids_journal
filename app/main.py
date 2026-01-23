@@ -30,8 +30,8 @@ class SensitiveDataFilter(logging.Filter):
 
     # Patterns to redact (regex pattern, replacement)
     PATTERNS = [
-        # Telegram bot tokens: 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
-        (r'bot\d+:[A-Za-z0-9_-]{35}', 'bot***:***REDACTED***'),
+        # Telegram bot tokens: 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ (any length)
+        (r'bot\d+:[A-Za-z0-9_-]+', 'bot***:***REDACTED***'),
         # Generic API keys/tokens (long alphanumeric strings after common keywords)
         (r'(token[=:]\s*)[A-Za-z0-9_-]{20,}', r'\1***REDACTED***'),
         (r'(api[_-]?key[=:]\s*)[A-Za-z0-9_-]{20,}', r'\1***REDACTED***'),

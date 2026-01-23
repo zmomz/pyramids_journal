@@ -230,6 +230,12 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     from ..services.report_service import report_service
     from ..services.telegram_service import telegram_service
 
+    # Handle both direct messages and callback queries (menu buttons)
+    message = update.message or (update.callback_query.message if update.callback_query else None)
+    if not message:
+        logger.error("No message context available for /report")
+        return
+
     period = context.args[0] if context.args else "all"
 
     try:
@@ -261,7 +267,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             # All-time report
             report = await generate_period_report(None)
         else:
-            await update.message.reply_text(
+            await message.reply_text(
                 "Usage:\n"
                 "/report - All-time report\n"
                 "/report today - Today's trades\n"
@@ -278,19 +284,19 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 report.equity_points, report.date, report.chart_stats
             )
             if chart_image:
-                await update.message.reply_photo(photo=chart_image)
+                await message.reply_photo(photo=chart_image)
                 logger.info("Equity curve chart sent via /report command")
 
         # Send the text report (handle long messages)
-        message = telegram_service.format_daily_report_message(report)
+        report_text = telegram_service.format_daily_report_message(report)
 
-        if len(message) <= 4096:
-            await update.message.reply_text(message)
+        if len(report_text) <= 4096:
+            await message.reply_text(report_text)
         else:
             # Split message into chunks, keeping 2-line trade entries together
             chunks = []
             current_chunk = ""
-            lines = message.split('\n')
+            lines = report_text.split('\n')
             i = 0
             while i < len(lines):
                 line = lines[i]
@@ -313,7 +319,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
             for i, chunk in enumerate(chunks):
                 try:
-                    await update.message.reply_text(chunk)
+                    await message.reply_text(chunk)
                     # Add delay between chunks to avoid Telegram rate limiting
                     if i < len(chunks) - 1:
                         await asyncio.sleep(0.5)
@@ -322,7 +328,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     except Exception as e:
         logger.error(f"Error in /report: {e}")
-        await update.message.reply_text(f"❌ Error generating report: {e}")
+        await message.reply_text(f"❌ Error generating report: {e}")
 
 
 async def generate_period_report(days: int | None):
