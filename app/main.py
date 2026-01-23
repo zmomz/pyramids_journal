@@ -281,6 +281,18 @@ async def send_daily_report(date: str | None = None) -> dict[str, Any]:
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler."""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
+
+    # Notify via Telegram
+    try:
+        from app.services.error_notifier import error_notifier
+
+        await error_notifier.notify_critical(
+            error=exc,
+            context=f"Endpoint: {request.method} {request.url.path}",
+        )
+    except Exception as notify_error:
+        logger.error(f"Failed to send error notification: {notify_error}")
+
     return JSONResponse(
         status_code=500,
         content={

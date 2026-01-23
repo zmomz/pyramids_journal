@@ -199,6 +199,7 @@ class TestProcessEntry:
 
             mock_config.get_fee_rate = MagicMock(return_value=0.001)
             mock_settings.validation_mode = "lenient"
+            mock_settings.max_pyramids = 5
 
             result, data = await TradeService._process_entry(
                 alert, "binance", parsed, datetime.now(UTC)
@@ -248,6 +249,7 @@ class TestProcessEntry:
             # Mock config
             mock_config.get_fee_rate = MagicMock(return_value=0.001)
             mock_settings.validation_mode = "lenient"
+            mock_settings.max_pyramids = 5
 
             result, data = await TradeService._process_entry(
                 alert, "binance", parsed, datetime.now(UTC)
@@ -299,6 +301,7 @@ class TestProcessEntry:
             # Mock config
             mock_config.get_fee_rate = MagicMock(return_value=0.001)
             mock_settings.validation_mode = "lenient"
+            mock_settings.max_pyramids = 5
 
             result, data = await TradeService._process_entry(
                 alert, "binance", parsed, datetime.now(UTC)
@@ -344,6 +347,7 @@ class TestProcessEntry:
             # Mock config
             mock_config.get_fee_rate = MagicMock(return_value=0.001)
             mock_settings.validation_mode = "strict"
+            mock_settings.max_pyramids = 5
 
             result, data = await TradeService._process_entry(
                 alert, "binance", parsed, datetime.now(UTC)
@@ -624,6 +628,7 @@ class TestProcessEntryEdgeCases:
             # Mock config
             mock_config.get_fee_rate = MagicMock(return_value=0.001)
             mock_settings.validation_mode = "lenient"
+            mock_settings.max_pyramids = 5
 
             result, data = await TradeService._process_entry(
                 alert, "binance", parsed, datetime.now(UTC)
@@ -1308,6 +1313,7 @@ class TestRaceConditionHandling:
             # Mock config
             mock_config.get_fee_rate = MagicMock(return_value=0.001)
             mock_settings.validation_mode = "lenient"
+            mock_settings.max_pyramids = 5
 
             result, data = await TradeService._process_entry(
                 alert, "binance", parsed, datetime.now(UTC)
@@ -1358,6 +1364,7 @@ class TestRaceConditionHandling:
 
             mock_config.get_fee_rate = MagicMock(return_value=0.001)
             mock_settings.validation_mode = "lenient"
+            mock_settings.max_pyramids = 5
 
             result, data = await TradeService._process_entry(
                 alert, "binance", parsed, datetime.now(UTC)

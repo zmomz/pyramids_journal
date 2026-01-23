@@ -1493,6 +1493,99 @@ async def cmd_cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(f"❌ Error: {e}")
 
 
+@channel_only
+async def cmd_cleanup_pyramids(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List and optionally close trades exceeding pyramid limit.
+
+    Usage:
+        /cleanup_pyramids - List trades with more than max_pyramids
+        /cleanup_pyramids <group_id> CONFIRM - Close the specified trade
+    """
+    try:
+        args = context.args if context.args else []
+        max_pyramids = settings.max_pyramids
+
+        # Find trades exceeding the limit
+        cursor = await db.connection.execute(
+            """
+            SELECT t.id, t.group_id, t.exchange, t.base, t.quote, t.status,
+                   COUNT(p.id) as pyramid_count
+            FROM trades t
+            JOIN pyramids p ON t.id = p.trade_id
+            WHERE t.status = 'open'
+            GROUP BY t.id
+            HAVING COUNT(p.id) > ?
+            ORDER BY COUNT(p.id) DESC
+            """,
+            (max_pyramids,),
+        )
+        rows = await cursor.fetchall()
+
+        if not args:
+            # List over-limit trades
+            if not rows:
+                await update.message.reply_text(
+                    f"✅ No trades exceed the {max_pyramids} pyramid limit.\n\n"
+                    "All open trades are within limits."
+                )
+                return
+
+            lines = [f"⚠️ Trades exceeding {max_pyramids} pyramid limit:\n"]
+            for row in rows:
+                lines.append(
+                    f"📈 {row['group_id']}\n"
+                    f"   {row['base']}/{row['quote']} on {row['exchange']}\n"
+                    f"   Pyramids: {row['pyramid_count']} (limit: {max_pyramids})\n"
+                )
+
+            lines.append(f"\nTo force-close a trade:\n`/cleanup_pyramids <group_id> CONFIRM`")
+            await update.message.reply_text("\n".join(lines))
+            return
+
+        # Handle confirmation to close a specific trade
+        if len(args) >= 2 and args[-1].upper() == "CONFIRM":
+            group_id = args[0]
+
+            # Find the trade
+            cursor = await db.connection.execute(
+                "SELECT id, group_id FROM trades WHERE group_id = ? AND status = 'open'",
+                (group_id,),
+            )
+            trade = await cursor.fetchone()
+
+            if not trade:
+                await update.message.reply_text(
+                    f"❌ Trade not found: {group_id}\n\n"
+                    "Use `/cleanup_pyramids` to see trades exceeding the limit."
+                )
+                return
+
+            # Close the trade manually (mark as closed without exit price)
+            await db.connection.execute(
+                "UPDATE trades SET status = 'closed' WHERE id = ?",
+                (trade["id"],),
+            )
+            await db.connection.commit()
+
+            await update.message.reply_text(
+                f"✅ Closed trade: {group_id}\n\n"
+                "Note: This was a manual close. No exit was recorded."
+            )
+            logger.info(f"Manually closed over-limit trade: {group_id}")
+            return
+
+        # Invalid args
+        await update.message.reply_text(
+            f"Usage:\n"
+            f"/cleanup_pyramids - List over-limit trades\n"
+            f"/cleanup_pyramids <group_id> CONFIRM - Close specific trade"
+        )
+
+    except Exception as e:
+        logger.error(f"Error in /cleanup_pyramids: {e}")
+        await update.message.reply_text(f"❌ Error: {e}")
+
+
 def setup_handlers(app: Application, bot) -> None:
     """Register all command handlers."""
     global _bot
@@ -1535,6 +1628,7 @@ def setup_handlers(app: Application, bot) -> None:
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
+    app.add_handler(CommandHandler("cleanup_pyramids", cmd_cleanup_pyramids))
     app.add_handler(CommandHandler("help", cmd_help))
 
-    logger.info("Registered 25 bot command handlers")
+    logger.info("Registered 26 bot command handlers")

@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Validation
     validation_mode: Literal["strict", "lenient"] = Field(default="strict")
 
+    # Trading
+    max_pyramids: int = Field(default=5)
+
     # Logging
     log_level: str = Field(default="INFO")
 

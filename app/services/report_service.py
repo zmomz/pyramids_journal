@@ -323,6 +323,17 @@ class ReportService:
 
         except Exception as e:
             logger.error(f"Failed to generate/send daily report: {e}")
+            # Notify via Telegram
+            try:
+                from .error_notifier import error_notifier
+
+                await error_notifier.notify_error(
+                    error_type="Daily Report Failed",
+                    message=f"Failed to generate or send daily report for {date or 'yesterday'}",
+                    details=str(e),
+                )
+            except Exception:
+                pass  # Don't let notification failure mask original error
             return False
 
 

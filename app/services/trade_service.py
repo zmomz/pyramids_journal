@@ -130,6 +130,13 @@ class TradeService:
             logger.info(f"Fetched price from {exchange}: ${current_price}")
         except Exception as e:
             logger.error(f"Failed to fetch price from {exchange}: {e}")
+            # Notify via Telegram
+            from .error_notifier import error_notifier
+
+            await error_notifier.notify_exchange_error(
+                exchange=exchange,
+                error_msg=f"Failed to fetch price for {parsed.base}/{parsed.quote}: {e}",
+            )
             return TradeResult(
                 success=False,
                 message=f"Failed to fetch price from {exchange}: {e}",
@@ -147,6 +154,26 @@ class TradeService:
             existing_pyramids = await db.get_pyramids_for_trade(trade_id)
             pyramid_index = len(existing_pyramids)
             is_new_trade = False
+
+            # Enforce pyramid limit
+            if pyramid_index >= settings.max_pyramids:
+                logger.warning(
+                    f"Max pyramids ({settings.max_pyramids}) reached for {group_id}"
+                )
+                # Notify via Telegram
+                from .error_notifier import error_notifier
+
+                await error_notifier.notify_pyramid_limit(
+                    pair=f"{parsed.base}/{parsed.quote}",
+                    exchange=exchange,
+                    current_pyramids=pyramid_index,
+                    max_pyramids=settings.max_pyramids,
+                )
+                return TradeResult(
+                    success=False,
+                    message=f"Maximum {settings.max_pyramids} pyramids reached for {group_id}",
+                    error="MAX_PYRAMIDS_REACHED",
+                ), None
         else:
             # Prepare new trade info but don't create until validation passes
             sequence = await db.get_next_group_sequence(
@@ -336,6 +363,13 @@ class TradeService:
             logger.info(f"Fetched exit price from {exchange}: ${exit_price}")
         except Exception as e:
             logger.error(f"Failed to fetch exit price from {exchange}: {e}")
+            # Notify via Telegram
+            from .error_notifier import error_notifier
+
+            await error_notifier.notify_exchange_error(
+                exchange=exchange,
+                error_msg=f"Failed to fetch exit price for {parsed.base}/{parsed.quote}: {e}",
+            )
             return TradeResult(
                 success=False,
                 message=f"Failed to fetch price from {exchange}: {e}",
