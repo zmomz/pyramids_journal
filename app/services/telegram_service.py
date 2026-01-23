@@ -351,6 +351,7 @@ class TelegramService:
             return None
 
         # Extract data and convert timestamps to configured timezone
+        tz = pytz.timezone(settings.timezone)
         timestamps = [self._get_local_time(p.timestamp) for p in equity_points]
         cumulative_pnls = [p.cumulative_pnl for p in equity_points]
 
@@ -400,8 +401,8 @@ class TelegramService:
         # Add horizontal line at zero
         ax.axhline(y=0, color='#ffffff', linewidth=0.8, linestyle='--', alpha=0.4)
 
-        # Format x-axis (time)
-        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+        # Format x-axis (time) - use configured timezone
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=tz))
         plt.sca(ax)
         plt.xticks(rotation=45, ha='right')
 
