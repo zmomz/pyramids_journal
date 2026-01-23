@@ -134,7 +134,7 @@ async def webhook(
         raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
 
     logger.info(
-        f"Parsed signal: {alert.action} {alert.symbol} @ {alert.price} on {alert.exchange} "
+        f"Parsed signal: {alert.action} {alert.symbol} @ {alert.close} on {alert.exchange} "
         f"(tf={alert.timeframe}, side={alert.position_side}, contracts={alert.contracts})"
     )
 
@@ -178,7 +178,7 @@ async def webhook(
     if not result.success:
         logger.warning(
             f"Signal processing failed: {result.message} (error={result.error}) | "
-            f"Signal: {alert.action} {alert.symbol} @ {alert.price} on {alert.exchange}"
+            f"Signal: {alert.action} {alert.symbol} @ {alert.close} on {alert.exchange}"
         )
         return WebhookResponse(
             success=False,
