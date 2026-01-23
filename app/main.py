@@ -44,12 +44,23 @@ class SensitiveDataFilter(logging.Filter):
         self._compiled = [(re.compile(p, re.IGNORECASE), r) for p, r in self.PATTERNS]
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Redact sensitive data from log message."""
+        """Redact sensitive data from log message and args."""
+        # Filter the main message
         if record.msg:
             msg = str(record.msg)
             for pattern, replacement in self._compiled:
                 msg = pattern.sub(replacement, msg)
             record.msg = msg
+
+        # Filter args (httpx passes URLs as args)
+        if record.args:
+            filtered_args = []
+            for arg in record.args:
+                if isinstance(arg, str):
+                    for pattern, replacement in self._compiled:
+                        arg = pattern.sub(replacement, arg)
+                filtered_args.append(arg)
+            record.args = tuple(filtered_args)
         return True
 
 

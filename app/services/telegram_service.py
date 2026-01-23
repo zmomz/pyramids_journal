@@ -350,8 +350,8 @@ class TelegramService:
             logger.warning("matplotlib not installed, skipping equity curve")
             return None
 
-        # Extract data
-        timestamps = [p.timestamp for p in equity_points]
+        # Extract data and convert timestamps to configured timezone
+        timestamps = [self._get_local_time(p.timestamp) for p in equity_points]
         cumulative_pnls = [p.cumulative_pnl for p in equity_points]
 
         # Determine if single day or period report for dynamic labels
