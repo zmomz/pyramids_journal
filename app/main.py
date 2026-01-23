@@ -70,6 +70,9 @@ def setup_logging() -> None:
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     formatter = logging.Formatter(log_format)
 
+    # Suppress httpx INFO logs (contain bot tokens in URLs)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
     # Create filter to redact sensitive data
     sensitive_filter = SensitiveDataFilter()
 
