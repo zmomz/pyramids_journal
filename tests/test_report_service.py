@@ -339,8 +339,8 @@ class TestGenerateDailyReport:
                 assert report.chart_stats.win_rate > 0
 
     @pytest.mark.asyncio
-    async def test_report_defaults_to_yesterday(self, populated_db):
-        """Test that report defaults to yesterday when no date provided."""
+    async def test_report_defaults_to_today(self, populated_db):
+        """Test that report defaults to today when no date provided."""
         from app.services.report_service import ReportService
 
         service = ReportService()
@@ -354,8 +354,8 @@ class TestGenerateDailyReport:
 
                 # Use timezone-aware calculation to match the service logic
                 tz = pytz.timezone("UTC")
-                yesterday = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
-                assert report.date == yesterday
+                today = datetime.now(tz).strftime("%Y-%m-%d")
+                assert report.date == today
 
 
 class TestGenerateAndSendDailyReport:
