@@ -244,8 +244,11 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
         if period == "yesterday":
             # Yesterday's report
-            report = await report_service.generate_daily_report()
-            date = report.date
+            import pytz
+            tz = pytz.timezone(settings.timezone)
+            yesterday = (datetime.now(tz) - timedelta(days=1)).strftime("%Y-%m-%d")
+            report = await report_service.generate_daily_report(yesterday)
+            date = yesterday
         elif period == "today":
             # Today's report
             import pytz
