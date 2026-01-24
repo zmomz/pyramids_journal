@@ -42,3 +42,17 @@ htmlcov/
 # Misc
 *.bak
 *.tmp
+
+# Trade exports and data files
+trades_export_*.csv
+trades_export_*.xlsx
+TradingView_*.csv
+TradingView_*.md
+
+# Investigation files
+investigations_logs/
+filtered_investigation
+24trades
+
+# Windows artifacts
+nul
