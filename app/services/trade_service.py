@@ -123,25 +123,9 @@ class TradeService:
     ) -> tuple[TradeResult, PyramidEntryData | None]:
         """Process an entry signal."""
 
-        # Fetch actual price from exchange
-        try:
-            price_data = await exchange_service.get_price(exchange, parsed.base, parsed.quote)
-            current_price = price_data.price
-            logger.info(f"Fetched price from {exchange}: ${current_price}")
-        except Exception as e:
-            logger.error(f"Failed to fetch price from {exchange}: {e}")
-            # Notify via Telegram
-            from .error_notifier import error_notifier
-
-            await error_notifier.notify_exchange_error(
-                exchange=exchange,
-                error_msg=f"Failed to fetch price for {parsed.base}/{parsed.quote}: {e}",
-            )
-            return TradeResult(
-                success=False,
-                message=f"Failed to fetch price from {exchange}: {e}",
-                error="PRICE_FETCH_FAILED",
-            ), None
+        # Use price from TradingView payload
+        current_price = alert.close
+        logger.info(f"Using price from payload: ${current_price}")
 
         # Check for existing trade (but don't create yet - validate first)
         trade = await db.get_open_trade_by_group(
@@ -356,25 +340,9 @@ class TradeService:
                 error="NO_PYRAMIDS",
             ), None
 
-        # Fetch actual price from exchange
-        try:
-            price_data = await exchange_service.get_price(exchange, parsed.base, parsed.quote)
-            exit_price = price_data.price
-            logger.info(f"Fetched exit price from {exchange}: ${exit_price}")
-        except Exception as e:
-            logger.error(f"Failed to fetch exit price from {exchange}: {e}")
-            # Notify via Telegram
-            from .error_notifier import error_notifier
-
-            await error_notifier.notify_exchange_error(
-                exchange=exchange,
-                error_msg=f"Failed to fetch exit price for {parsed.base}/{parsed.quote}: {e}",
-            )
-            return TradeResult(
-                success=False,
-                message=f"Failed to fetch price from {exchange}: {e}",
-                error="PRICE_FETCH_FAILED",
-            ), None
+        # Use price from TradingView payload
+        exit_price = alert.close
+        logger.info(f"Using exit price from payload: ${exit_price}")
 
         # Calculate PnL for each pyramid
         fee_rate = exchange_config.get_fee_rate(exchange)

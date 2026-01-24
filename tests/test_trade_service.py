@@ -138,24 +138,46 @@ class TestProcessEntry:
     """Tests for TradeService._process_entry method."""
 
     @pytest.mark.asyncio
-    async def test_price_fetch_failure(self):
-        """Test entry fails when price fetch fails."""
+    async def test_entry_uses_payload_price(self):
+        """Test that entry uses price from alert payload (alert.close)."""
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = create_test_alert()
+        # Use a specific price in the alert
+        alert = create_test_alert(close=45000.0)
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
-        with patch("app.services.trade_service.exchange_service") as mock_exchange:
-            mock_exchange.get_price = AsyncMock(side_effect=Exception("Connection error"))
+        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
+             patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config, \
+             patch("app.services.trade_service.settings") as mock_settings:
+
+            # Symbol info for precision
+            mock_symbol_info = MagicMock()
+            mock_symbol_info.qty_precision = 4
+            mock_exchange.get_symbol_info = AsyncMock(return_value=mock_symbol_info)
+            mock_exchange.round_quantity = MagicMock(side_effect=lambda q, p: round(q, p))
+
+            # Database mocks
+            mock_db.get_open_trade_by_group = AsyncMock(return_value=None)
+            mock_db.get_next_group_sequence = AsyncMock(return_value=1)
+            mock_db.get_pyramid_capital = AsyncMock(return_value=1000.0)
+            mock_db.create_trade_with_group = AsyncMock()
+            mock_db.add_pyramid = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+
+            # Config mocks
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
+            mock_settings.validation_mode = "warn"
 
             result, data = await TradeService._process_entry(
                 alert, "binance", parsed, datetime.now(UTC)
             )
 
-        assert result.success is False
-        assert result.error == "PRICE_FETCH_FAILED"
-        assert data is None
+        assert result.success is True
+        # Verify the price used is from the payload, not fetched from exchange
+        assert result.price == 45000.0
+        assert data.entry_price == 45000.0
 
     @pytest.mark.asyncio
     async def test_entry_with_symbol_info_failure_uses_default_precision(self):
@@ -409,17 +431,11 @@ class TestProcessExit:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = create_test_alert(action="sell", position_side="flat")
+        alert = create_test_alert(action="sell", position_side="flat", close=52000.0)
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
-        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
-             patch("app.services.trade_service.db") as mock_db, \
+        with patch("app.services.trade_service.db") as mock_db, \
              patch("app.services.trade_service.exchange_config") as mock_config:
-
-            # Mock exit price fetch
-            mock_price = MagicMock()
-            mock_price.price = 52000.0  # Exit at profit
-            mock_exchange.get_price = AsyncMock(return_value=mock_price)
 
             # Mock database
             mock_db.get_open_trade_by_group = AsyncMock(return_value={
@@ -466,32 +482,48 @@ class TestProcessExit:
         assert data.net_pnl > 0  # Should be profitable
 
     @pytest.mark.asyncio
-    async def test_exit_price_fetch_failure(self):
-        """Test exit fails when price fetch fails."""
+    async def test_exit_uses_payload_price(self):
+        """Test that exit uses price from alert payload (alert.close)."""
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = create_test_alert(action="sell", position_side="flat")
+        # Use a specific exit price in the alert
+        alert = create_test_alert(action="sell", position_side="flat", close=53000.0)
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
-        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
-             patch("app.services.trade_service.db") as mock_db:
+        with patch("app.services.trade_service.db") as mock_db, \
+             patch("app.services.trade_service.exchange_config") as mock_config:
 
             mock_db.get_open_trade_by_group = AsyncMock(return_value={
                 "id": "trade_123",
-                "group_id": "BTC_Binance_1h_001"
+                "group_id": "BTC_Binance_1h_001",
+                "timeframe": "1h"
             })
             mock_db.get_pyramids_for_trade = AsyncMock(return_value=[
-                {"id": "pyr_1", "pyramid_index": 0}
+                {
+                    "id": "pyr_1",
+                    "pyramid_index": 0,
+                    "entry_price": 50000.0,
+                    "position_size": 0.02,
+                    "capital_usdt": 1000.0,
+                    "fee_usdt": 1.0,
+                    "entry_time": "2026-01-20T10:00:00"
+                }
             ])
-            mock_exchange.get_price = AsyncMock(side_effect=Exception("Connection error"))
+            mock_db.update_pyramid_pnl = AsyncMock()
+            mock_db.add_exit = AsyncMock(return_value=True)
+            mock_db.close_trade = AsyncMock()
+            mock_db.mark_alert_processed = AsyncMock()
+            mock_config.get_fee_rate = MagicMock(return_value=0.001)
 
             result, data = await TradeService._process_exit(
                 alert, "binance", parsed, datetime.now(UTC)
             )
 
-        assert result.success is False
-        assert result.error == "PRICE_FETCH_FAILED"
+        assert result.success is True
+        # Verify the exit price is from the payload
+        assert result.price == 53000.0
+        assert data.exit_price == 53000.0
 
 
 class TestGetTradeSummary:
@@ -756,7 +788,7 @@ class TestPnLCalculationAccuracy:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = create_test_alert(action="sell", position_side="flat")
+        alert = create_test_alert(action="sell", position_side="flat", close=52000.0)
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         # Setup: Entry at $50,000, position size 0.02 BTC, capital $1000
@@ -766,13 +798,8 @@ class TestPnLCalculationAccuracy:
         # Exit fee: 0.1% of (52000 * 0.02) = 0.1% of $1040 = $1.04
         # Expected net PnL: $40 - $1.00 - $1.04 = $37.96
 
-        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
-             patch("app.services.trade_service.db") as mock_db, \
+        with patch("app.services.trade_service.db") as mock_db, \
              patch("app.services.trade_service.exchange_config") as mock_config:
-
-            mock_price = MagicMock()
-            mock_price.price = 52000.0
-            mock_exchange.get_price = AsyncMock(return_value=mock_price)
 
             mock_db.get_open_trade_by_group = AsyncMock(return_value={
                 "id": "trade_pnl_test",
@@ -822,7 +849,7 @@ class TestPnLCalculationAccuracy:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = create_test_alert(action="sell", position_side="flat")
+        alert = create_test_alert(action="sell", position_side="flat", close=48000.0)
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         # Setup: Entry at $50,000, position size 0.02 BTC
@@ -832,13 +859,8 @@ class TestPnLCalculationAccuracy:
         # Exit fee: 0.1% of (48000 * 0.02) = $0.96
         # Expected net PnL: -$40 - $1.00 - $0.96 = -$41.96
 
-        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
-             patch("app.services.trade_service.db") as mock_db, \
+        with patch("app.services.trade_service.db") as mock_db, \
              patch("app.services.trade_service.exchange_config") as mock_config:
-
-            mock_price = MagicMock()
-            mock_price.price = 48000.0
-            mock_exchange.get_price = AsyncMock(return_value=mock_price)
 
             mock_db.get_open_trade_by_group = AsyncMock(return_value={
                 "id": "trade_loss_test",
@@ -879,7 +901,7 @@ class TestPnLCalculationAccuracy:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = create_test_alert(action="sell", position_side="flat")
+        alert = create_test_alert(action="sell", position_side="flat", close=51000.0)
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         # Setup: Two pyramids
@@ -893,13 +915,8 @@ class TestPnLCalculationAccuracy:
         # Total fees: $1.00 + $0.98 + $2.04 = $4.02
         # Net PnL: $60 - $4.02 = $55.98
 
-        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
-             patch("app.services.trade_service.db") as mock_db, \
+        with patch("app.services.trade_service.db") as mock_db, \
              patch("app.services.trade_service.exchange_config") as mock_config:
-
-            mock_price = MagicMock()
-            mock_price.price = 51000.0
-            mock_exchange.get_price = AsyncMock(return_value=mock_price)
 
             mock_db.get_open_trade_by_group = AsyncMock(return_value={
                 "id": "trade_multi",
@@ -955,20 +972,15 @@ class TestPnLCalculationAccuracy:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = create_test_alert(action="sell", position_side="flat")
+        alert = create_test_alert(action="sell", position_side="flat", close=55000.0)
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
         # Setup: Entry at $50,000, capital $1000
         # Exit at $55,000 (10% price increase)
         # Gross PnL: (55000 - 50000) * 0.02 = $100 (10% of capital)
 
-        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
-             patch("app.services.trade_service.db") as mock_db, \
+        with patch("app.services.trade_service.db") as mock_db, \
              patch("app.services.trade_service.exchange_config") as mock_config:
-
-            mock_price = MagicMock()
-            mock_price.price = 55000.0
-            mock_exchange.get_price = AsyncMock(return_value=mock_price)
 
             mock_db.get_open_trade_by_group = AsyncMock(return_value={
                 "id": "trade_pct",
@@ -1111,16 +1123,11 @@ class TestBoundaryConditions:
         from app.services.trade_service import TradeService
         from app.services.symbol_normalizer import ParsedSymbol
 
-        alert = create_test_alert(action="sell", position_side="flat")
+        alert = create_test_alert(action="sell", position_side="flat", close=100000.0)
         parsed = ParsedSymbol(base="BTC", quote="USDT")
 
-        with patch("app.services.trade_service.exchange_service") as mock_exchange, \
-             patch("app.services.trade_service.db") as mock_db, \
+        with patch("app.services.trade_service.db") as mock_db, \
              patch("app.services.trade_service.exchange_config") as mock_config:
-
-            mock_price = MagicMock()
-            mock_price.price = 100000.0  # 100% gain from entry
-            mock_exchange.get_price = AsyncMock(return_value=mock_price)
 
             mock_db.get_open_trade_by_group = AsyncMock(return_value={
                 "id": "trade_moon",
